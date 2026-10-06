@@ -355,9 +355,16 @@ export const zplSettings = {
   pause(): string {
     return '~PP';
   },
-  /** ~JA: cancel all queued formats. */
+  /** ~JA: cancel all formats in the buffer and any batch that prints; the printer stops after the label it prints now. Source: Zebra ZPL II guide, ~JA. */
   cancelAll(): string {
     return '~JA';
+  },
+  /**
+   * ~JR: reset the printer like a power cycle (clears the buffers and DRAM, runs the power-on test).
+   * The Bluetooth link may drop for a moment. Source: Zebra ZPL II guide, ~JR.
+   */
+  reset(): string {
+    return '~JR';
   },
   /** ~HS asks for host status. ~HQES asks for the error and warning flags. */
   hostStatusQuery(): string {

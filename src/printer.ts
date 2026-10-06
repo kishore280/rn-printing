@@ -8,6 +8,7 @@ import {
   resolveReconnect,
   ResolvedReconnect,
 } from './reconnect';
+import { zplSettings } from './zpl';
 import { ExtendedStatus, parseExtendedStatus, parseHostStatus, PrinterStatus } from './status';
 import type { Transport } from './transport';
 
@@ -161,6 +162,24 @@ export class LabelPrinter {
       await new Promise<void>((r) => setTimeout(r, pollMs));
     }
     return false;
+  }
+
+  /**
+   * Printer control. Each sends one ZPL command (`zplSettings`). NOT yet checked on the SNBC printer: send them and read the status.
+   * `clearJobs` is ~JA (cancel all formats and clear the buffers), `resume` is ~PS (print start after a pause),
+   * `reset` is ~JR (like a power cycle), `calibrate` is ~JC (measure the media; the printer feeds labels).
+   */
+  clearJobs(): Promise<void> {
+    return this.print(zplSettings.cancelAll());
+  }
+  resume(): Promise<void> {
+    return this.print(zplSettings.resume());
+  }
+  reset(): Promise<void> {
+    return this.print(zplSettings.reset());
+  }
+  calibrate(): Promise<void> {
+    return this.print(zplSettings.calibrate());
   }
 
   /**

@@ -136,3 +136,16 @@ describe('LabelPrinter.printAll with pauses and waiting for the printer', () => 
     expect(t.writtenText()).toBe('A');
   });
 });
+
+
+describe('LabelPrinter control commands', () => {
+  it('sends ~JA, ~PS, ~JR and ~JC, one command each', async () => {
+    const t = new FakeTransport();
+    const lp = new LabelPrinter(t);
+    await lp.clearJobs();
+    await lp.resume();
+    await lp.reset();
+    await lp.calibrate();
+    expect(t.writtenText()).toBe('~JA|~PS|~JR|~JC');
+  });
+});
