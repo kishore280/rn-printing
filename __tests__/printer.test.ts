@@ -75,3 +75,64 @@ describe('LabelPrinter ordering', () => {
     expect(t.writtenText()).toBe('x|y');
   });
 });
+
+
+describe('LabelPrinter.printAll with pauses and waiting for the printer', () => {
+  const frame = (x: string) => `\x02${x}\x03\r\n`;
+  const hs = (formats: number, full = 0) =>
+    Uint8Array.from(Buffer.from(frame(`030,0,0,1234,${String(formats).padStart(3, '0')},${full},0,0,000,0,0,0`) + frame('000,0,0,0,0,2,6,0,00000000,1,000') + frame('1234,0'), 'latin1'));
+  const empty = new Uint8Array(0);
+
+  it('sends the labels in order with no pause by default, and reports each one', async () => {
+    const t = new FakeTransport();
+    const sent: number[] = [];
+    await new LabelPrinter(t).printAll(['A', 'B', 'C'], { onLabelSent: (i) => sent.push(i) });
+    expect(t.writtenText()).toBe('A|B|C');
+    expect(sent).toEqual([0, 1, 2]);
+  });
+
+  it('pauses between labels, not before the first or after the last', async () => {
+    const t = new FakeTransport();
+    const stamps: number[] = [];
+    const orig = t.write.bind(t);
+    t.write = async (d: Uint8Array) => { stamps.push(Date.now()); return orig(d); };
+    await new LabelPrinter(t).printAll(['A', 'B', 'C'], { pauseMs: 40 });
+    expect(stamps).toHaveLength(3);
+    expect(stamps[1]! - stamps[0]!).toBeGreaterThanOrEqual(35);
+    expect(stamps[2]! - stamps[1]!).toBeGreaterThanOrEqual(35);
+  });
+
+  it('asks the printer (~HS) before each label after the first, and waits until it holds no format', async () => {
+    const t = new FakeTransport();
+    // Each status query reads twice: once to clear old bytes, once for the reply.
+    t.replies = [empty, hs(2), empty, hs(1), empty, hs(0)];
+    await new LabelPrinter(t).printAll(['A', 'B'], { waitForPrinter: { pollMs: 1 } });
+    expect(t.writtenText()).toBe('A|~HS|~HS|~HS|B');
+  });
+
+  it('does not wait when the buffer is not full and holds nothing; waits while the buffer is full', async () => {
+    const t = new FakeTransport();
+    t.replies = [empty, hs(0, 1), empty, hs(0, 0)];
+    await new LabelPrinter(t).printAll(['A', 'B'], { waitForPrinter: { pollMs: 1 } });
+    expect(t.writtenText()).toBe('A|~HS|~HS|B');
+  });
+
+  it('sends anyway when the printer does not answer ~HS, and after the timeout', async () => {
+    const t = new FakeTransport();
+    await new LabelPrinter(t).printAll(['A', 'B'], { waitForPrinter: true });
+    expect(t.writtenText()).toBe('A|~HS|B'); // no reply: no information, so no waiting
+    const u = new FakeTransport();
+    u.replies = Array.from({ length: 40 }, (_, i) => (i % 2 === 0 ? empty : hs(3)));
+    await new LabelPrinter(u).printAll(['A', 'B'], { waitForPrinter: { timeoutMs: 60, pollMs: 10 } });
+    expect(u.writtenText().endsWith('|B')).toBe(true);
+    expect(u.writtenText().startsWith('A|~HS')).toBe(true);
+  });
+
+  it('stops at the first error', async () => {
+    const t = new FakeTransport();
+    const orig = t.write.bind(t);
+    t.write = async (d: Uint8Array) => { if (Buffer.from(d).toString() === 'B') throw new Error('boom'); return orig(d); };
+    await expect(new LabelPrinter(t, { reconnect: false }).printAll(['A', 'B', 'C'])).rejects.toThrow('boom');
+    expect(t.writtenText()).toBe('A');
+  });
+});

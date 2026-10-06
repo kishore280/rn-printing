@@ -1,5 +1,5 @@
 export { LabelPrinter } from './printer';
-export type { StatusOptions, Printable } from './printer';
+export type { StatusOptions, Printable, PrintAllOptions, WaitForPrinterOptions } from './printer';
 
 export { ZplLabel, testLabel, mmToDots, escapeFieldData, zplSettings, zplDownloadImage } from './zpl';
 export type {

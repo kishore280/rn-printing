@@ -67,10 +67,21 @@ Source: a photo of the printer's own self-test print, sent by the owner on 2026-
 | Bluetooth | name `TVSE LP 46 Dlite_4152`, address 28:D4:1E:5B:75:D3, Bluetooth version `B_KR_250210_r4686` |
 | Network | IP 0.0.0.0, raw port 9100 set, but this unit has no network port in use |
 
-What follows from it (reasoning, NOT measured):
+What follows from it:
 - The default label of the billing app (50 x 30 mm) is not this media: set the real width and a height of about 70 mm, or the print is cut or off the label.
-- If the Bluetooth module passes bytes to the printer over a 115200-baud serial line, the sustained speed cannot be more than about 11 KB/s, and a 100 KB job needs at least 9 s.
-  Write without response with 182-byte pieces every 10 ms is about 18 KB/s, which is more than that. Whether the module buffers or flow-controls is unknown. The hardware test (pieces, delay 0, 10, 20, 30 ms) must show it.
+- An earlier note here guessed that a 115200-baud serial line limits the Bluetooth speed to about 11 KB/s. **The first hardware run disproved it**: 120 KB went through in 8.4 s (14.4 KB/s) and printed right.
+
+## First hardware run (2026-10-06, Android 16, auto mode, MTU 247, billing app Printer test)
+
+Measured by the owner with the Printer test screen (their report and photos). Mode `auto` used write without response; one mode so far.
+
+| Test | Result |
+| --- | --- |
+| Scan, GATT discovery, selection | OK. The printer was found at -50 dBm. The write characteristic chosen was `...6daa...` (3 equal scores, the first one found). It printed, but it is also readable, so it looks like a setting; `...8841...` is the usual data input. The selection rule now prefers a characteristic that cannot be read. |
+| MTU | asked 247, got 247, payload 244 B |
+| Probe | `onCharacteristicWrite` was called for write without response (`probe callback: yes`), as the Android sources said |
+| Small label, QR, barcode, image (10 KB, 716 ms), large image (120,627 B, 495 chunks, 8.4 s, 14.4 KB/s) | OK, and the labels printed right (photos) |
+| 10 labels in a row | The app sent all 10 in 53 ms (107 B each) and said OK. **The printer printed only 2.** The data was accepted by the phone's Bluetooth stack, so the loss is after it: the printer or its module drops data that arrives while it prints. Not yet explained: other write modes, a pause between labels and `~HS` waiting (`LabelPrinter.printAll` options) are the next tests. |
 
 ## Compiled, not run
 

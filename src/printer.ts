@@ -26,6 +26,24 @@ export interface LabelPrinterOptions {
   onConnectionEvent?: ((event: ConnectionEvent) => void) | undefined;
 }
 
+export interface WaitForPrinterOptions {
+  /** Give up waiting after this many ms and send anyway. Default 15000. */
+  timeoutMs?: number;
+  /** Ask again after this many ms. Default 150. */
+  pollMs?: number;
+  /** Send the next label when the printer holds at most this many formats. Default 0. */
+  maxFormatsInBuffer?: number;
+}
+
+export interface PrintAllOptions {
+  /** Wait this long after each label before the next one, in ms. Default 0. */
+  pauseMs?: number | undefined;
+  /** Ask the printer (~HS) before each label after the first, and wait until it has room. */
+  waitForPrinter?: boolean | WaitForPrinterOptions | undefined;
+  /** Called after each label was sent. */
+  onLabelSent?: ((index: number, total: number) => void) | undefined;
+}
+
 export interface StatusOptions {
   /** Default 1500. */
   timeoutMs?: number;
@@ -107,9 +125,42 @@ export class LabelPrinter {
     return this.exclusive(() => this.withLink(() => this.transport.write(bytes), false));
   }
 
-  /** Send many labels in order. Stops at the first error. */
-  async printAll(labels: ReadonlyArray<Printable | string>): Promise<void> {
-    for (const label of labels) await this.print(label);
+  /**
+   * Send many labels in order. Stops at the first error.
+   *
+   * A printer that is busy printing can drop what it is sent: on one TVS LP 46 Dlite, 10 small labels sent in 53 ms printed 2.
+   * So between two labels this can wait (`pauseMs`) or ask the printer (`~HS`) until it has room (`waitForPrinter`).
+   * Both are NOT yet shown to fix it on a printer: that is what the hardware test is for.
+   */
+  async printAll(labels: ReadonlyArray<Printable | string>, options: PrintAllOptions = {}): Promise<void> {
+    const wait = options.waitForPrinter === true ? {} : options.waitForPrinter || null;
+    for (const [index, label] of labels.entries()) {
+      if (index > 0) {
+        if (options.pauseMs && options.pauseMs > 0) await new Promise<void>((r) => setTimeout(r, options.pauseMs));
+        if (wait) await this.waitForRoom(wait);
+      }
+      await this.print(label);
+      options.onLabelSent?.(index, labels.length);
+    }
+  }
+
+  /**
+   * Ask the printer (~HS) until it holds at most `maxFormatsInBuffer` formats and its buffer is not full, or `timeoutMs` pass.
+   * Returns true when it had room, false on a timeout. A printer that does not answer ~HS counts as "no information":
+   * this returns false at once, and the caller falls back to a pause.
+   */
+  private async waitForRoom(o: WaitForPrinterOptions): Promise<boolean> {
+    const timeoutMs = o.timeoutMs ?? 15000;
+    const pollMs = o.pollMs ?? 150;
+    const max = o.maxFormatsInBuffer ?? 0;
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      const status = await this.getStatus({ timeoutMs: 600 });
+      if (status === null) return false;
+      if (!status.bufferFull && status.formatsInBuffer <= max) return true;
+      await new Promise<void>((r) => setTimeout(r, pollMs));
+    }
+    return false;
   }
 
   /**

@@ -115,7 +115,8 @@ function resolveWriteType(c: BleGattCharacteristic, mode: BleWriteMode, gatt: re
  * 2. The caller's `serviceUuid` / `writeCharacteristicUuid` / `notifyCharacteristicUuid` narrow the search.
  * 3. Only writable characteristics count. Generic Access, Generic Attribute and Device Information are skipped.
  * 4. Score: +4 when the service also has a notify/indicate characteristic (a serial-style pair),
- *    +2 when the characteristic does both kinds of write, +1 when it cannot notify itself.
+ *    +2 when the characteristic does both kinds of write, +1 when it cannot notify itself,
+ *    +1 when it cannot be read (a data input is write-only; one that can also be read is usually a setting).
  * 5. The best score wins. Equal scores keep the discovery order, and the others are listed in `alternatives`
  *    (with `strictSelection` they throw instead).
  *
@@ -144,7 +145,7 @@ export function selectCharacteristics(gatt: readonly BleGattCharacteristic[], op
 
   const score = (c: BleGattCharacteristic): number => {
     const pair = gatt.some((o) => !same(o, c) && sameUuid(o.serviceUuid, c.serviceUuid) && canNotify(o));
-    return (pair ? 4 : 0) + (c.write && c.writeWithoutResponse ? 2 : 0) + (canNotify(c) ? 0 : 1);
+    return (pair ? 4 : 0) + (c.write && c.writeWithoutResponse ? 2 : 0) + (canNotify(c) ? 0 : 1) + (c.read ? 0 : 1);
   };
   const best = Math.max(...candidates.map(score));
   const top = candidates.filter((c) => score(c) === best);

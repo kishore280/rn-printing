@@ -387,6 +387,20 @@ describe('selectCharacteristics', () => {
     expect(() => selectCharacteristics(serialGatt(), { notifyCharacteristicUuid: 'nope' })).toThrow(/not found/);
   });
 
+  it('prefers a write-only characteristic over one that can also be read (a setting) when the rest ties', () => {
+    const svc = 'aaaaaaaa-0000-0000-0000-000000000001';
+    const gatt = [
+      ch(svc, 'cfg-readable', { read: true, write: true, writeWithoutResponse: true }),
+      ch(svc, 'data-sink', { write: true, writeWithoutResponse: true }),
+      ch(svc, 'rx', { notify: true }),
+    ];
+    const s = selectCharacteristics(gatt);
+    expect(s.write.uuid).toBe('data-sink');
+    expect(s.alternatives).toEqual([]);
+    // A caller can still choose the other one.
+    expect(selectCharacteristics(gatt, { writeCharacteristicUuid: 'cfg-readable' }).write.uuid).toBe('cfg-readable');
+  });
+
   // The layout that a user reported for one TVS LP 46 Dlite (nRF Connect, not checked by us). It is test data only.
   it('picks the write characteristic of a serial-over-BLE module without being told its UUIDs', () => {
     const svc = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
