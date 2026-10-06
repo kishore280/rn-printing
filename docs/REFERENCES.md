@@ -18,6 +18,7 @@ so you know how far to trust it.
 | `ArrayBuffer`, Promise, HybridObject use | [Nitro docs](https://nitro.margelo.com/docs/types/array-buffers), Margelo `build-nitro-modules` skill, official `nitrogen init` scaffold | Build files come from the scaffold. Specs pass `nitrogen`. |
 | iOS limit | [Apple developer forums](https://developer.apple.com/forums/thread/72148) | Bluetooth Classic (SPP) needs MFi. Public CoreBluetooth is BLE only. |
 | ZPL barcode and `^BQ` parameters | Zebra ZPL II programming guide | Parameter order as documented. |
+| ZPL parser and checker (`src/zplParse.ts`) | Command list and value ranges from the SNBC SDK V2.4.2.1 C API guide and native library (`docs/TEARDOWN.md` 4a); syntax from the Zebra ZPL II guide | Tested against our own builder output and against the reference compressor (round trip). **NOT checked on a printer.** SNBC publishes no BPLZ command manual, so "no issue" does not mean the printer accepts the label. Default font (`^CF` A, 9 x 5) and QR default cell size 1 are from memory of the Zebra guide, not verified. |
 | BPLA text record layout | Datamax DPL record table (rotation, font, width mult, height mult, size, row, column) and the format strings inside SNBC's own library | Same layout. |
 | BPLC (CPCL) | Zebra and Brother CPCL manuals; command strings inside SNBC's library | Same commands. |
 

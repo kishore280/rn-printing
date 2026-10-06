@@ -1,6 +1,26 @@
 export { LabelPrinter } from './printer';
 export type { StatusOptions, Printable, PrintAllOptions, WaitForPrinterOptions } from './printer';
 
+export { parseZpl, validateZpl, decodeGfaData } from './zplParse';
+export type {
+  ZplDocument,
+  ZplLabelDoc,
+  ZplElement,
+  ZplText,
+  ZplBarcode1D,
+  ZplQr,
+  ZplOtherCode,
+  ZplBox,
+  ZplDiagonal,
+  ZplEllipse,
+  ZplImage,
+  ZplIssue,
+  ZplSeverity,
+  ZplRotation,
+  ZplSymbology,
+  ZplParseOptions,
+} from './zplParse';
+
 export { ZplLabel, testLabel, mmToDots, escapeFieldData, zplSettings, zplDownloadImage } from './zpl';
 export type {
   LabelOptions,

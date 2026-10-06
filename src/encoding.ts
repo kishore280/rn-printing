@@ -43,6 +43,51 @@ export function utf8Encode(input: string): Uint8Array {
   return Uint8Array.from(out);
 }
 
+/**
+ * Decode UTF-8 bytes. A bad byte becomes U+FFFD. It does not throw.
+ * Written by hand for the same reason as utf8Encode: no TextDecoder.
+ */
+export function utf8Decode(bytes: ArrayLike<number>): string {
+  let out = '';
+  const n = bytes.length;
+  for (let i = 0; i < n; ) {
+    const b = bytes[i] as number;
+    let need = 0;
+    let cp = 0;
+    if (b < 0x80) {
+      cp = b;
+    } else if (b >= 0xc2 && b <= 0xdf) {
+      need = 1;
+      cp = b & 0x1f;
+    } else if (b >= 0xe0 && b <= 0xef) {
+      need = 2;
+      cp = b & 0x0f;
+    } else if (b >= 0xf0 && b <= 0xf4) {
+      need = 3;
+      cp = b & 0x07;
+    } else {
+      out += '\ufffd';
+      i++;
+      continue;
+    }
+    let ok = true;
+    for (let k = 1; ok && k <= need; k++) {
+      const c = bytes[i + k];
+      if (c === undefined || (c & 0xc0) !== 0x80) ok = false;
+      else cp = (cp << 6) | (c & 0x3f);
+    }
+    const min = need === 1 ? 0x80 : need === 2 ? 0x800 : need === 3 ? 0x10000 : 0;
+    if (!ok || cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+      out += '\ufffd';
+      i++;
+      continue;
+    }
+    out += String.fromCodePoint(cp);
+    i += need + 1;
+  }
+  return out;
+}
+
 /** Decode bytes as Latin-1. Printer status replies are plain ASCII. */
 export function latin1Decode(bytes: ArrayLike<number>): string {
   return asciiToString(bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes));

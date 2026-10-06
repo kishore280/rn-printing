@@ -33,6 +33,7 @@ Read this file before you change the code. It tells you where things are, how th
 | --- | --- |
 | `src/index.ts` | Public exports. Add new public API here. |
 | `src/zpl.ts` | `ZplLabel` builder (BPLZ), `zplSettings`, `zplDownloadImage`, `testLabel`. |
+| `src/zplParse.ts` | `parseZpl`, `validateZpl`, `decodeGfaData`: reads ZPL text into drawable elements and issues. Pure TS. Used for previews. Not checked on a printer. |
 | `src/cpcl.ts` | `CpclLabel` builder (BPLC), `cpclSettings`. |
 | `src/bpla.ts` | `BplaLabel` builder. Experimental. Origin is bottom-left. |
 | `src/image.ts` | `ditherRgba`, `ditherGray`, `compressBitmap`. Call native code. Async. |
