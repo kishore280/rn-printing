@@ -1,0 +1,764 @@
+import { TransportError } from '../src/errors';
+import { LabelPrinter } from '../src/printer';
+import { setBluetoothLE } from '../src/native';
+import type { BleCharacteristic } from '../src/specs/BleCharacteristic';
+import type { BleConnection } from '../src/specs/BleConnection.nitro';
+import type { BleScanOptions } from '../src/specs/BleScanOptions';
+import type { BleScanResult } from '../src/specs/BleScanResult';
+import type { BluetoothLE as NativeBluetoothLE } from '../src/specs/BluetoothLE.nitro';
+import { describeGatt, normalizeUuid, selectCharacteristics } from '../src/transports/bleGatt';
+import { BleDevice, bleFilters, BluetoothLE, BluetoothLETransport, classify } from '../src/transports/bluetoothLE';
+import { ZplLabel } from '../src/zpl';
+
+// ---- fakes ----
+
+const ch = (
+  serviceUuid: string,
+  uuid: string,
+  p: Partial<Omit<BleCharacteristic, 'serviceUuid' | 'uuid'>> = {}
+): BleCharacteristic => ({
+  serviceUuid,
+  uuid,
+  read: false,
+  write: false,
+  writeWithoutResponse: false,
+  notify: false,
+  indicate: false,
+  ...p,
+});
+
+/** A made-up serial-style service: one write characteristic and one notify characteristic. */
+const SERIAL_SVC = '11111111-0000-0000-0000-000000000001';
+const SERIAL_TX = '11111111-0000-0000-0000-0000000000a1';
+const SERIAL_RX = '11111111-0000-0000-0000-0000000000a2';
+const serialGatt = (): BleCharacteristic[] => [
+  ch('00001800-0000-1000-8000-00805f9b34fb', '00002a00-0000-1000-8000-00805f9b34fb', { read: true, write: true }),
+  ch(SERIAL_SVC, SERIAL_RX, { notify: true }),
+  ch(SERIAL_SVC, SERIAL_TX, { write: true, writeWithoutResponse: true }),
+];
+
+interface FakeLinkOptions {
+  gatt?: BleCharacteristic[];
+  mtu?: number;
+  maxWrite?: (withResponse: boolean) => number;
+  writeImpl?: (index: number, bytes: number[]) => Promise<void>;
+  requestMtuImpl?: (mtu: number) => Promise<number>;
+  discoverImpl?: () => Promise<BleCharacteristic[]>;
+}
+
+class FakeLink {
+  connected = true;
+  writes: Array<{ s: string; c: string; bytes: number[]; withResponse: boolean; timeoutMs: number }> = [];
+  mtuRequests: number[] = [];
+  subscribed: string[] = [];
+  unsubscribed: string[] = [];
+  disconnects = 0;
+  push: ((d: ArrayBuffer) => void) | null = null;
+  inFlight = 0;
+  maxInFlight = 0;
+  constructor(readonly opts: FakeLinkOptions, readonly lost: (reason: string) => void) {}
+
+  asNative(): BleConnection {
+    const self = this;
+    return {
+      id: 'dev-1',
+      get isConnected() { return self.connected; },
+      get mtu() { return self.opts.mtu ?? 23; },
+      requestMtu: async (mtu: number) => {
+        self.mtuRequests.push(mtu);
+        return self.opts.requestMtuImpl ? self.opts.requestMtuImpl(mtu) : (self.opts.mtu ?? 23);
+      },
+      discover: async () => (self.opts.discoverImpl ? self.opts.discoverImpl() : self.opts.gatt ?? serialGatt()),
+      maxWriteLength: (withResponse: boolean) =>
+        self.opts.maxWrite ? self.opts.maxWrite(withResponse) : (self.opts.mtu ?? 23) - 3,
+      write: async (s: string, c: string, data: ArrayBuffer, withResponse: boolean, timeoutMs: number) => {
+        const bytes = Array.from(new Uint8Array(data));
+        self.inFlight++;
+        self.maxInFlight = Math.max(self.maxInFlight, self.inFlight);
+        try {
+          const index = self.writes.length;
+          self.writes.push({ s, c, bytes, withResponse, timeoutMs });
+          await new Promise<void>((r) => setTimeout(r, 1));
+          if (self.opts.writeImpl) await self.opts.writeImpl(index, bytes);
+        } finally {
+          self.inFlight--;
+        }
+      },
+      subscribe: async (s: string, c: string, onData: (d: ArrayBuffer) => void) => {
+        self.subscribed.push(`${s}/${c}`);
+        self.push = onData;
+      },
+      unsubscribe: async (s: string, c: string) => { self.unsubscribed.push(`${s}/${c}`); },
+      disconnect: async () => { self.disconnects++; self.connected = false; },
+    } as unknown as BleConnection;
+  }
+}
+
+interface FakeNativeOptions extends FakeLinkOptions {
+  state?: string;
+  connectError?: Error;
+  /** Called for each scan. Emit results through `emit`, then resolve to end the scan. */
+  scanImpl?: (options: BleScanOptions, emit: (r: BleScanResult) => void) => Promise<void>;
+}
+
+function fakeNative(opts: FakeNativeOptions = {}) {
+  const links: FakeLink[] = [];
+  const connectCalls: Array<{ id: string; timeoutMs: number }> = [];
+  let stopCalls = 0;
+  let stateListener: ((s: string) => void) | null = null;
+  let stopScanResolver: (() => void) | null = null;
+  const mod = {
+    getState: () => opts.state ?? 'on',
+    setStateListener: (l: (s: string) => void) => { stateListener = l; },
+    scan: (options: BleScanOptions, onResult: (r: BleScanResult) => void) =>
+      opts.scanImpl
+        ? opts.scanImpl(options, onResult)
+        : new Promise<void>((resolve) => { stopScanResolver = resolve; }),
+    stopScan: async () => { stopCalls++; stopScanResolver?.(); },
+    connect: async (id: string, timeoutMs: number, onDisconnect: (reason: string) => void) => {
+      connectCalls.push({ id, timeoutMs });
+      if (opts.connectError) throw opts.connectError;
+      const link = new FakeLink(opts, (reason) => { link.connected = false; onDisconnect(reason); });
+      links.push(link);
+      return link.asNative();
+    },
+  } as unknown as NativeBluetoothLE;
+  setBluetoothLE(mod);
+  return { links, connectCalls, stopCalls: () => stopCalls, emitState: (s: string) => stateListener?.(s) };
+}
+
+const scanResult = (id: string, name: string, rssi?: number, extra: Partial<BleScanResult> = {}): BleScanResult => ({
+  id, name, rssi, connectable: true, serviceUuids: [], manufacturerData: '', ...extra,
+});
+
+const bytes = (n: number, seed = 1): Uint8Array => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed) & 0xff);
+
+afterEach(() => setBluetoothLE(undefined));
+
+// ---- scanning ----
+
+describe('BluetoothLE.scan', () => {
+  it('maps results, drops duplicates, applies the filter and sorts by RSSI', async () => {
+    fakeNative({
+      scanImpl: async (_o, emit) => {
+        emit(scanResult('a', 'Label-A', -80, { serviceUuids: ['s1'], manufacturerData: '4c00aa', txPower: -4 }));
+        emit(scanResult('b', '', undefined));
+        emit(scanResult('c', 'Label-C', -40));
+        emit(scanResult('c', 'Label-C', -35)); // same device again
+        emit(scanResult('d', 'Other', -20));
+      },
+    });
+    const seen: string[] = [];
+    const list = await BluetoothLE.scan({ filter: bleFilters.name('label'), onDevice: (d) => seen.push(d.id) });
+    expect(list.map((d) => d.id)).toEqual(['c', 'a']);
+    expect(seen).toEqual(['a', 'c']);
+    expect(list[1]).toEqual({
+      id: 'a', name: 'Label-A', rssi: -80, connectable: true, serviceUuids: ['s1'], manufacturerData: '4c00aa', txPower: -4,
+    });
+  });
+
+  it('turns empty name and missing numbers into null', async () => {
+    fakeNative({ scanImpl: async (_o, emit) => emit(scanResult('b', '')) });
+    const [d] = await BluetoothLE.scan();
+    expect(d).toMatchObject({ name: null, rssi: null, manufacturerData: null, txPower: null });
+  });
+
+  it('passes the platform options and the defaults', async () => {
+    let seen: BleScanOptions | null = null;
+    fakeNative({ scanImpl: async (o) => { seen = o; } });
+    await BluetoothLE.scan();
+    expect(seen).toEqual({ serviceUuids: [], timeoutMs: 5000, allowDuplicates: false });
+    await BluetoothLE.scan({ serviceUuids: ['abcd'], timeoutMs: 0, allowDuplicates: true });
+    expect(seen).toEqual({ serviceUuids: ['abcd'], timeoutMs: 0, allowDuplicates: true });
+  });
+
+  it('stops on abort and returns what it found', async () => {
+    const fake = fakeNative({
+      scanImpl: (_o, emit) => new Promise<void>((resolve) => {
+        emit(scanResult('a', 'A', -50));
+        // the scan ends when stopScan() is called
+        setTimeout(resolve, 20);
+      }),
+    });
+    let onAbort: (() => void) | null = null;
+    const signal = {
+      aborted: false,
+      addEventListener: (_t: 'abort', l: () => void) => { onAbort = l; },
+      removeEventListener: () => undefined,
+    };
+    const p = BluetoothLE.scan({ signal });
+    signal.aborted = true;
+    (onAbort as (() => void) | null)?.();
+    const list = await p;
+    expect(fake.stopCalls()).toBe(1);
+    expect(list.map((d) => d.id)).toEqual(['a']);
+  });
+
+  it('returns nothing when the signal is aborted before the scan', async () => {
+    const fake = fakeNative();
+    const signal = { aborted: true, addEventListener: () => undefined, removeEventListener: () => undefined };
+    expect(await BluetoothLE.scan({ signal })).toEqual([]);
+    expect(fake.stopCalls()).toBe(0);
+  });
+
+  it('stopScan() ends a scan that has no time limit', async () => {
+    fakeNative();
+    const p = BluetoothLE.scan({ timeoutMs: 0 });
+    await BluetoothLE.stopScan();
+    expect(await p).toEqual([]);
+  });
+
+  it.each([
+    ['[E_PERMISSION] The BLUETOOTH_SCAN permission is not granted', 'E_PERMISSION'],
+    ['[E_BLUETOOTH_OFF] Bluetooth is off', 'E_BLUETOOTH_OFF'],
+    ['[E_SCAN_FAILED] Scan failed: internal error', 'E_SCAN_FAILED'],
+    ['something without a code', 'E_SCAN_FAILED'],
+  ])('maps the native scan error "%s" to %s', async (message, code) => {
+    fakeNative({ scanImpl: async () => { throw new Error(message); } });
+    await expect(BluetoothLE.scan()).rejects.toMatchObject({ name: 'TransportError', code });
+  });
+
+  it('throws UnsupportedPlatformError without the native object', async () => {
+    setBluetoothLE(null);
+    await expect(BluetoothLE.scan()).rejects.toMatchObject({ name: 'UnsupportedPlatformError' });
+    expect(BluetoothLE.isSupported()).toBe(false);
+  });
+});
+
+describe('BluetoothLE filters, state and permissions', () => {
+  const dev = (o: Partial<BleDevice>): BleDevice => ({
+    id: 'x', name: null, rssi: null, connectable: true, serviceUuids: [], manufacturerData: null, txPower: null, ...o,
+  });
+
+  it('builds filters', () => {
+    expect(bleFilters.name('lp 46')(dev({ name: 'TVSE LP 46 Dlite_1' }))).toBe(true);
+    expect(bleFilters.name(/^abc/)(dev({ name: 'xabc' }))).toBe(false);
+    expect(bleFilters.name('a')(dev({ name: null }))).toBe(false);
+    expect(bleFilters.serviceUuid('abcd')(dev({ serviceUuids: ['0000abcd-0000-1000-8000-00805f9b34fb'] }))).toBe(true);
+    expect(bleFilters.manufacturerData('4c00')(dev({ manufacturerData: '4c0012' }))).toBe(true);
+    expect(bleFilters.minRssi(-70)(dev({ rssi: -60 }))).toBe(true);
+    expect(bleFilters.minRssi(-70)(dev({ rssi: null }))).toBe(false);
+    expect(bleFilters.all(bleFilters.name('a'), bleFilters.minRssi(-50))(dev({ name: 'a', rssi: -60 }))).toBe(false);
+    expect(bleFilters.any(bleFilters.name('a'), bleFilters.minRssi(-50))(dev({ name: 'a', rssi: -60 }))).toBe(true);
+  });
+
+  it('matches a profile that the caller made', () => {
+    const profile = { name: 'mine', protocol: 'BPLZ', matches: bleFilters.name('printer') };
+    expect(BluetoothLE.matchProfile(dev({ name: 'My Printer' }), [profile])).toBe(profile);
+    expect(BluetoothLE.matchProfile(dev({ name: 'Watch' }), [profile])).toBeUndefined();
+  });
+
+  it('reports the adapter state and state changes', () => {
+    const fake = fakeNative({ state: 'off' });
+    expect(BluetoothLE.getState()).toBe('off');
+    const states: string[] = [];
+    BluetoothLE.onStateChange((s) => states.push(s));
+    fake.emitState('on');
+    expect(states).toEqual(['on']);
+  });
+
+  it('asks for the Android 12 permissions', async () => {
+    expect(await BluetoothLE.requestPermissions()).toBe(true);
+  });
+});
+
+// ---- GATT selection ----
+
+describe('selectCharacteristics', () => {
+  it('normalizes UUIDs', () => {
+    expect(normalizeUuid('180A')).toBe('0000180a-0000-1000-8000-00805f9b34fb');
+    expect(normalizeUuid('0x180a')).toBe('0000180a-0000-1000-8000-00805f9b34fb');
+    expect(normalizeUuid('12345678')).toBe('12345678-0000-1000-8000-00805f9b34fb');
+    expect(normalizeUuid('1111111100000000000000000000ABCD')).toBe('11111111-0000-0000-0000-00000000abcd');
+  });
+
+  it('finds the serial pair with no UUID given, and prefers a confirmed write', () => {
+    const s = selectCharacteristics(serialGatt());
+    expect(s.write.uuid).toBe(SERIAL_TX);
+    expect(s.notify?.uuid).toBe(SERIAL_RX);
+    expect(s.withResponse).toBe(true); // the characteristic has both kinds, 'auto' takes the confirmed one
+    expect(s.alternatives).toEqual([]);
+  });
+
+  it('uses write without response when that is all the characteristic offers', () => {
+    const gatt = [ch(SERIAL_SVC, SERIAL_TX, { writeWithoutResponse: true })];
+    expect(selectCharacteristics(gatt).withResponse).toBe(false);
+  });
+
+  it('honors writeMode and fails when the characteristic cannot do it', () => {
+    expect(selectCharacteristics(serialGatt(), { writeMode: 'withoutResponse' }).withResponse).toBe(false);
+    const only = [ch(SERIAL_SVC, SERIAL_TX, { write: true })];
+    expect(() => selectCharacteristics(only, { writeMode: 'withoutResponse' })).toThrow(/No writable characteristic matches/);
+  });
+
+  it('skips Generic Access and Device Information, which are not printer data', () => {
+    const gatt = [
+      ch('1800', '2a00', { write: true }),
+      ch('180a', '2a29', { write: true }),
+    ];
+    expect(() => selectCharacteristics(gatt)).toThrow(/No writable characteristic/);
+  });
+
+  it('lets the caller narrow by service and by characteristic, in any UUID spelling', () => {
+    const gatt = [
+      ch('aaaa0000-0000-0000-0000-000000000001', 'aaaa0000-0000-0000-0000-0000000000f1', { write: true }),
+      ch('bbbb0000-0000-0000-0000-000000000001', 'bbbb0000-0000-0000-0000-0000000000f1', { write: true }),
+      ch('bbbb0000-0000-0000-0000-000000000001', 'bbbb0000-0000-0000-0000-0000000000f2', { notify: true }),
+    ];
+    const s = selectCharacteristics(gatt, { serviceUuid: 'BBBB0000-0000-0000-0000-000000000001' });
+    expect(s.write.uuid).toBe('bbbb0000-0000-0000-0000-0000000000f1');
+    expect(s.notify?.uuid).toBe('bbbb0000-0000-0000-0000-0000000000f2');
+    const t = selectCharacteristics(gatt, { writeCharacteristicUuid: 'AAAA00000000000000000000000000F1' });
+    expect(t.write.uuid).toBe('aaaa0000-0000-0000-0000-0000000000f1');
+  });
+
+  it('prefers a service that has a notify partner over a lone writable characteristic', () => {
+    const gatt = [
+      ch('aaaa0000-0000-0000-0000-000000000001', 'aaaa0000-0000-0000-0000-0000000000f1', { write: true }),
+      ...serialGatt().slice(1),
+    ];
+    expect(selectCharacteristics(gatt).write.uuid).toBe(SERIAL_TX);
+  });
+
+  it('reports a tie, and throws on a tie when strictSelection is set', () => {
+    const gatt = [
+      ch(SERIAL_SVC, 'x1', { write: true }),
+      ch(SERIAL_SVC, 'x2', { write: true }),
+    ];
+    const s = selectCharacteristics(gatt);
+    expect(s.write.uuid).toBe('x1');
+    expect(s.alternatives.map((c) => c.uuid)).toEqual(['x2']);
+    expect(() => selectCharacteristics(gatt, { strictSelection: true })).toThrow(/equally well/);
+  });
+
+  it('accepts a custom select() and checks its answer', () => {
+    const gatt = serialGatt();
+    const rx = gatt[1] as BleCharacteristic;
+    const tx = gatt[2] as BleCharacteristic;
+    const s = selectCharacteristics(gatt, { select: () => ({ write: tx, notify: rx }) });
+    expect(s.reason).toMatch(/select/);
+    expect(() => selectCharacteristics(gatt, { select: () => undefined })).toThrow(/returned no characteristic/);
+    expect(() => selectCharacteristics(gatt, { select: () => ({ write: ch('q', 'z', { write: true }), notify: null }) })).toThrow(
+      /does not have/
+    );
+  });
+
+  it('puts the GATT table in the error so the user can choose by hand', () => {
+    try {
+      selectCharacteristics([ch(SERIAL_SVC, SERIAL_RX, { notify: true })]);
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(TransportError);
+      expect((e as TransportError).code).toBe('E_NO_CHARACTERISTIC');
+      expect((e as Error).message).toContain(SERIAL_RX);
+      expect((e as Error).message).toContain('notify');
+    }
+    expect(describeGatt([])).toMatch(/no characteristics/);
+  });
+
+  it('finds an explicit notify characteristic or fails', () => {
+    const s = selectCharacteristics(serialGatt(), { notifyCharacteristicUuid: SERIAL_RX });
+    expect(s.notify?.uuid).toBe(SERIAL_RX);
+    expect(() => selectCharacteristics(serialGatt(), { notifyCharacteristicUuid: 'nope' })).toThrow(/not found/);
+  });
+
+  // The layout that a user reported for one TVS LP 46 Dlite (nRF Connect, not checked by us). It is test data only.
+  it('picks the write characteristic of a serial-over-BLE module without being told its UUIDs', () => {
+    const svc = '49535343-fe7d-4ae5-8fa9-9fafd205e455';
+    const gatt = [
+      ch('00001800-0000-1000-8000-00805f9b34fb', '00002a00-0000-1000-8000-00805f9b34fb', { read: true }),
+      ch(svc, '49535343-1e4d-4bd9-ba61-23c647249616', { notify: true }),
+      ch(svc, '49535343-8841-43f4-a8d4-ecbe34729bb3', { write: true, writeWithoutResponse: true }),
+    ];
+    const s = selectCharacteristics(gatt);
+    expect(s.write.uuid).toBe('49535343-8841-43f4-a8d4-ecbe34729bb3');
+    expect(s.notify?.uuid).toBe('49535343-1e4d-4bd9-ba61-23c647249616');
+  });
+});
+
+// ---- error codes ----
+
+describe('classify', () => {
+  it('reads the native code in square brackets', () => {
+    const e = classify(new Error('[E_AUTH] needs pairing'), 'E_WRITE');
+    expect(e).toBeInstanceOf(TransportError);
+    expect(e).toMatchObject({ code: 'E_AUTH', message: 'needs pairing' });
+  });
+  it('uses the fallback when there is no code', () => {
+    expect(classify(new Error('plain'), 'E_CONNECT')).toMatchObject({ code: 'E_CONNECT', message: 'plain' });
+    expect(classify('text', 'E_X')).toMatchObject({ code: 'E_X' });
+  });
+  it('keeps a TransportError as it is', () => {
+    const t = new TransportError('x', 'E_TIMEOUT');
+    expect(classify(t, 'E_WRITE')).toBe(t);
+  });
+});
+
+// ---- transport ----
+
+describe('BluetoothLETransport: connect', () => {
+  it('connects, asks for an MTU on Android, discovers the GATT and picks characteristics', async () => {
+    const fake = fakeNative({ mtu: 185 });
+    const t = new BluetoothLETransport({ id: 'dev-1' });
+    const states: string[] = [];
+    t.onConnectionState((e) => states.push(e.state));
+    await t.connect();
+    expect(fake.connectCalls).toEqual([{ id: 'dev-1', timeoutMs: 10000 }]);
+    expect(fake.links[0]?.mtuRequests).toEqual([247]);
+    expect(t.gatt).toHaveLength(3);
+    expect(t.selection?.write.uuid).toBe(SERIAL_TX);
+    expect(fake.links[0]?.subscribed).toEqual([`${SERIAL_SVC}/${SERIAL_RX}`]);
+    expect(await t.isConnected()).toBe(true);
+    expect(states).toEqual(['connecting', 'connected']);
+    await t.disconnect();
+    expect(fake.links[0]?.unsubscribed).toEqual([`${SERIAL_SVC}/${SERIAL_RX}`]);
+    expect(await t.isConnected()).toBe(false);
+    expect(states).toEqual(['connecting', 'connected', 'disconnecting', 'disconnected']);
+  });
+
+  it('does not ask for an MTU when requestMtu is false, and keeps going when the request fails', async () => {
+    const a = fakeNative();
+    await new BluetoothLETransport('dev-1', { requestMtu: false }).connect();
+    expect(a.links[0]?.mtuRequests).toEqual([]);
+
+    const b = fakeNative({ requestMtuImpl: async () => { throw new Error('[E_TIMEOUT] no answer'); } });
+    const t = new BluetoothLETransport('dev-1', { requestMtu: 100 });
+    await t.connect();
+    expect(b.links[0]?.mtuRequests).toEqual([100]);
+    expect(await t.isConnected()).toBe(true);
+  });
+
+  it('can connect without notifications', async () => {
+    const fake = fakeNative();
+    await new BluetoothLETransport('dev-1', { subscribe: false }).connect();
+    expect(fake.links[0]?.subscribed).toEqual([]);
+  });
+
+  it('still connects when notifications fail, and prints', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    // Break subscribe on the next link.
+    const mod = (await import('../src/native')).getBluetoothLE() as NativeBluetoothLE;
+    const realConnect = mod.connect.bind(mod);
+    (mod as unknown as { connect: unknown }).connect = async (...a: Parameters<NativeBluetoothLE['connect']>) => {
+      const link = await realConnect(...a);
+      (link as unknown as { subscribe: unknown }).subscribe = async () => { throw new Error('[E_NOTIFY] no cccd'); };
+      return link;
+    };
+    await t.connect();
+    await t.write(Uint8Array.of(1, 2, 3));
+    expect(fake.links[0]?.writes).toHaveLength(1);
+  });
+
+  it('cleans up and reports the code when discovery finds nothing to write to', async () => {
+    const fake = fakeNative({ gatt: [ch(SERIAL_SVC, SERIAL_RX, { notify: true })] });
+    const t = new BluetoothLETransport('dev-1');
+    await expect(t.connect()).rejects.toMatchObject({ code: 'E_NO_CHARACTERISTIC' });
+    expect(fake.links[0]?.disconnects).toBe(1);
+    expect(t.connectionState).toBe('disconnected');
+    expect(t.selection).toBeNull();
+  });
+
+  it('closes the link when discovery fails, and the error is retryable', async () => {
+    const fake = fakeNative({ discoverImpl: async () => { throw new Error('[E_DISCOVERY] status 133'); } });
+    await expect(new BluetoothLETransport('dev-1').connect()).rejects.toMatchObject({ code: 'E_DISCOVERY' });
+    expect(fake.links[0]?.disconnects).toBe(1);
+  });
+
+  it.each([
+    ['[E_PERMISSION] The BLUETOOTH_CONNECT permission is not granted', 'E_PERMISSION'],
+    ['[E_BLUETOOTH_OFF] Bluetooth is off', 'E_BLUETOOTH_OFF'],
+    ['[E_TIMEOUT] No answer from AA after 10000 ms', 'E_TIMEOUT'],
+    ['[E_BAD_ADDRESS] Bad Bluetooth address: zz', 'E_BAD_ADDRESS'],
+    ['[E_CONNECT] Cannot connect: GATT status 133', 'E_CONNECT'],
+    ['an unknown failure', 'E_CONNECT'],
+  ])('maps the native connect error "%s" to %s', async (message, code) => {
+    fakeNative({ connectError: new Error(message) });
+    const t = new BluetoothLETransport('dev-1');
+    await expect(t.connect()).rejects.toMatchObject({ name: 'TransportError', code });
+    expect(t.connectionState).toBe('disconnected');
+  });
+
+  it('passes its connect timeout to the native side', async () => {
+    const fake = fakeNative();
+    await new BluetoothLETransport('dev-1', { connectTimeoutMs: 1234 }).connect();
+    expect(fake.connectCalls[0]?.timeoutMs).toBe(1234);
+  });
+
+  it('options win over the profile', async () => {
+    const fake = fakeNative({ gatt: [...serialGatt()] });
+    const profile = { writeMode: 'withoutResponse' as const, chunkSize: 5, requestMtu: false as const };
+    const t = new BluetoothLETransport('dev-1', { profile, chunkSize: 7 });
+    await t.connect();
+    expect(fake.links[0]?.mtuRequests).toEqual([]);
+    expect(t.selection?.withResponse).toBe(false);
+    expect(t.payloadSize).toBe(7);
+  });
+});
+
+describe('BluetoothLETransport: write', () => {
+  it('splits by the link limit and keeps every byte in order', async () => {
+    const fake = fakeNative({ mtu: 185 }); // 182 bytes per write
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const data = bytes(1000);
+    await t.write(data);
+    const sent = fake.links[0]?.writes ?? [];
+    expect(sent.map((w) => w.bytes.length)).toEqual([182, 182, 182, 182, 182, 90]);
+    expect(sent.flatMap((w) => w.bytes)).toEqual(Array.from(data));
+    expect(sent.every((w) => w.s === SERIAL_SVC && w.c === SERIAL_TX && w.withResponse)).toBe(true);
+  });
+
+  it('sends a 50 KB job with nothing lost and never two writes at once', async () => {
+    const fake = fakeNative({ mtu: 247 });
+    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 0 });
+    await t.connect();
+    const data = bytes(50 * 1024, 7);
+    const progress: number[] = [];
+    await t.write(data, { onProgress: (sent) => progress.push(sent) });
+    const sent = fake.links[0]?.writes ?? [];
+    expect(sent).toHaveLength(Math.ceil((50 * 1024) / 244));
+    expect(sent.flatMap((w) => w.bytes)).toEqual(Array.from(data));
+    expect(fake.links[0]?.maxInFlight).toBe(1);
+    expect(progress[progress.length - 1]).toBe(50 * 1024);
+  });
+
+  it('uses 20-byte pieces when the link reports nothing useful', async () => {
+    const fake = fakeNative({ maxWrite: () => 0 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await t.write(bytes(45));
+    expect(fake.links[0]?.writes.map((w) => w.bytes.length)).toEqual([20, 20, 5]);
+  });
+
+  it('follows the MTU the device agreed to (a lower one than asked)', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    expect(t.payloadSize).toBe(20);
+    await t.write(bytes(41));
+    expect(fake.links[0]?.writes).toHaveLength(3);
+  });
+
+  it('caps pieces at chunkSize and asks the link for the right write type', async () => {
+    const asked: boolean[] = [];
+    const fake = fakeNative({ mtu: 247, maxWrite: (r) => { asked.push(r); return r ? 100 : 244; } });
+    const t = new BluetoothLETransport('dev-1', { chunkSize: 64, writeMode: 'withoutResponse' });
+    await t.connect();
+    expect(t.payloadSize).toBe(64);
+    await t.write(bytes(130));
+    expect(asked).toContain(false);
+    expect(fake.links[0]?.writes.map((w) => [w.bytes.length, w.withResponse])).toEqual([[64, false], [64, false], [2, false]]);
+  });
+
+  it('keeps binary data exact, also bytes that look like text or zero', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const data = Uint8Array.from([0, 255, 0x7e, 0x5e, 0x0d, 0x0a, 0x80, 0xff, 0x00, 0x1b]);
+    await t.write(data.subarray(1, 9)); // a view into a bigger buffer
+    expect(fake.links[0]?.writes.flatMap((w) => w.bytes)).toEqual(Array.from(data.subarray(1, 9)));
+  });
+
+  it('waits between pieces when chunkDelayMs is set, and by default only for writes without response', async () => {
+    const stamps: number[] = [];
+    fakeNative({ mtu: 23, writeImpl: async () => { stamps.push(Date.now()); } });
+    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 25 });
+    await t.connect();
+    await t.write(bytes(60));
+    expect(stamps).toHaveLength(3);
+    expect((stamps[2] ?? 0) - (stamps[0] ?? 0)).toBeGreaterThanOrEqual(45);
+
+    const stamps2: number[] = [];
+    fakeNative({ mtu: 23, writeImpl: async () => { stamps2.push(Date.now()); } });
+    const u = new BluetoothLETransport('dev-1', { writeMode: 'withoutResponse' });
+    await u.connect();
+    await u.write(bytes(60));
+    expect((stamps2[2] ?? 0) - (stamps2[0] ?? 0)).toBeGreaterThanOrEqual(15); // 2 x 10 ms default
+  });
+
+  it('does nothing for an empty write', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await t.write(new Uint8Array(0));
+    expect(fake.links[0]?.writes).toEqual([]);
+  });
+
+  it('refuses to write when not connected', async () => {
+    fakeNative();
+    await expect(new BluetoothLETransport('dev-1').write(Uint8Array.of(1))).rejects.toMatchObject({ code: 'E_NOT_CONNECTED' });
+  });
+
+  it('keeps two concurrent writes apart, byte for byte', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const a = new Uint8Array(100).fill(0xaa);
+    const b = new Uint8Array(100).fill(0xbb);
+    await Promise.all([t.write(a), t.write(b)]);
+    const all = fake.links[0]?.writes.flatMap((w) => w.bytes) ?? [];
+    expect(all.slice(0, 100).every((x) => x === 0xaa)).toBe(true);
+    expect(all.slice(100).every((x) => x === 0xbb)).toBe(true);
+    expect(fake.links[0]?.maxInFlight).toBe(1);
+  });
+
+  it('reports how many bytes went out when a piece fails, and keeps the native code', async () => {
+    fakeNative({
+      mtu: 23,
+      writeImpl: async (i) => { if (i === 2) throw new Error('[E_WRITE] Write failed: GATT status 133'); },
+    });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await expect(t.write(bytes(100))).rejects.toMatchObject({ code: 'E_WRITE', message: expect.stringContaining('40 of 100 bytes') });
+  });
+
+  it('maps a pairing error to E_AUTH, which is not retried', async () => {
+    fakeNative({ writeImpl: async () => { throw new Error('[E_AUTH] The device needs pairing'); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await expect(t.write(bytes(5))).rejects.toMatchObject({ code: 'E_AUTH' });
+  });
+
+  it('times out when a native write never finishes', async () => {
+    fakeNative({ writeImpl: () => new Promise<void>(() => undefined) });
+    const t = new BluetoothLETransport('dev-1', { writeTimeoutMs: 20 });
+    await t.connect();
+    const started = Date.now();
+    await expect(t.write(bytes(5))).rejects.toMatchObject({ code: 'E_TIMEOUT' });
+    expect(Date.now() - started).toBeLessThan(2500);
+  });
+
+  it('passes the write timeout to the native side', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1', { writeTimeoutMs: 777 });
+    await t.connect();
+    await t.write(bytes(3));
+    expect(fake.links[0]?.writes[0]?.timeoutMs).toBe(777);
+  });
+
+  it('can be cancelled between pieces', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const job = t.write(bytes(200), { onProgress: (sent) => { if (sent >= 40) t.cancel(); } });
+    await expect(job).rejects.toMatchObject({ code: 'E_CANCELLED' });
+    expect((fake.links[0]?.writes.length ?? 0)).toBeLessThan(10);
+    // The next write starts clean.
+    await t.write(bytes(5));
+  });
+
+  it('can be cancelled with an AbortSignal', async () => {
+    fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const signal = { aborted: true, addEventListener: () => undefined, removeEventListener: () => undefined };
+    await expect(t.write(bytes(50), { signal })).rejects.toMatchObject({ code: 'E_CANCELLED' });
+  });
+});
+
+describe('BluetoothLETransport: link loss and reconnect', () => {
+  it('reports an unexpected disconnect and fails the write in progress', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    const events: Array<[string, string | undefined]> = [];
+    t.onConnectionState((e) => events.push([e.state, e.reason]));
+    await t.connect();
+    const link = fake.links[0] as FakeLink;
+    const job = t.write(bytes(200), { onProgress: (sent) => { if (sent === 60) link.lost('GATT status 8 (connection timeout)'); } });
+    await expect(job).rejects.toMatchObject({ code: 'E_DISCONNECTED' });
+    expect(await t.isConnected()).toBe(false);
+    expect(events[events.length - 1]).toEqual(['disconnected', 'GATT status 8 (connection timeout)']);
+    await expect(t.write(bytes(5))).rejects.toMatchObject({ code: 'E_NOT_CONNECTED' });
+  });
+
+  it('opens a new link on connect() after a loss, and on reconnect()', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    (fake.links[0] as FakeLink).lost('out of range');
+    expect(await t.isConnected()).toBe(false);
+    await t.connect();
+    expect(fake.links).toHaveLength(2);
+    await t.write(Uint8Array.of(1));
+    expect(fake.links[1]?.writes).toHaveLength(1);
+    await t.reconnect();
+    expect(fake.links).toHaveLength(3);
+    expect(await t.isConnected()).toBe(true);
+  });
+
+  it('ignores a late disconnect callback from an old link', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const first = fake.links[0] as FakeLink;
+    await t.connect(); // closes the first link, opens a second
+    first.lost('late');
+    expect(await t.isConnected()).toBe(true);
+  });
+
+  it('reports the loss when the device turns off during idle time', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    (fake.links[0] as FakeLink).lost('the device closed the link');
+    expect(t.connectionState).toBe('disconnected');
+    expect(t.selection).toBeNull();
+  });
+});
+
+describe('BluetoothLETransport: replies', () => {
+  it('collects notification data for read()', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    fake.links[0]?.push?.(Uint8Array.of(0x02, 0x41).buffer);
+    fake.links[0]?.push?.(Uint8Array.of(0x42, 0x03).buffer);
+    expect(Array.from(await t.read({ timeoutMs: 500, idleMs: 20 }))).toEqual([0x02, 0x41, 0x42, 0x03]);
+  });
+});
+
+// ---- with the existing protocol layer ----
+
+describe('LabelPrinter over Bluetooth Low Energy', () => {
+  it('sends the bytes of a ZplLabel unchanged, in pieces, and reconnects after a loss', async () => {
+    const fake = fakeNative({ mtu: 100 });
+    const transport = new BluetoothLETransport('dev-1');
+    const printer = new LabelPrinter(transport, { reconnect: { initialDelayMs: 1, maxDelayMs: 2, jitter: false } });
+    const label = ZplLabel.fromMm(50, 30).text(20, 20, 'Hello', { height: 40 }).barcode128(20, 80, '12345678', { height: 70 });
+    const expected = Array.from(label.toBytes());
+
+    await printer.print(label);
+    expect(fake.links[0]?.writes.flatMap((w) => w.bytes)).toEqual(expected);
+    expect(fake.links[0]?.writes.every((w) => w.bytes.length <= 97)).toBe(true);
+
+    (fake.links[0] as FakeLink).lost('out of range'); // link lost while idle
+    await printer.print(label); // connects again by itself
+    expect(fake.links).toHaveLength(2);
+    expect(fake.links[1]?.writes.flatMap((w) => w.bytes)).toEqual(expected);
+  });
+
+  it('does not retry a connect that needs the user (permission, Bluetooth off)', async () => {
+    const connect = jest.fn(async () => { throw new Error('[E_PERMISSION] The BLUETOOTH_CONNECT permission is not granted'); });
+    setBluetoothLE({ connect } as unknown as NativeBluetoothLE);
+    const printer = new LabelPrinter(new BluetoothLETransport('dev-1'), { reconnect: { maxAttempts: 3, initialDelayMs: 1 } });
+    await expect(printer.print('^XA^XZ')).rejects.toMatchObject({ code: 'E_PERMISSION' });
+    expect(connect).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a connect that can work next time', async () => {
+    let calls = 0;
+    fakeNative();
+    const mod = (await import('../src/native')).getBluetoothLE() as NativeBluetoothLE;
+    const realConnect = mod.connect.bind(mod);
+    (mod as unknown as { connect: unknown }).connect = async (...a: Parameters<NativeBluetoothLE['connect']>) => {
+      if (++calls < 3) throw new Error('[E_CONNECT] Cannot connect: GATT status 133');
+      return realConnect(...a);
+    };
+    const printer = new LabelPrinter(new BluetoothLETransport('dev-1'), {
+      reconnect: { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 2, jitter: false },
+    });
+    await printer.print('^XA^XZ');
+    expect(calls).toBe(3);
+  });
+});

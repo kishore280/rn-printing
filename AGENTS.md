@@ -8,7 +8,7 @@ Read this file before you change the code. It tells you where things are, how th
 (TVS LP 46 D Lite = SNBC BTP-4200E; 203 dpi; 108 mm maximum width).
 
 - Command languages: BPLZ (ZPL II), BPLC (CPCL), BPLA (experimental).
-- Transports: Bluetooth Classic (Android only), BLE (Android + iOS), TCP port 9100 (Android + iOS).
+- Transports: Bluetooth Classic (Android only), BLE (Android + iOS, native), TCP port 9100 (Android + iOS).
 - iOS has NO Bluetooth Classic. Apple allows it only with MFi hardware. iOS uses BLE or TCP.
 - Built on Nitro Modules (`react-native-nitro-modules`). Fast native code. No bridge JSON.
 
@@ -41,15 +41,15 @@ Read this file before you change the code. It tells you where things are, how th
 | `src/reconnect.ts` | cockatiel retry policy, transient-error rule, `ReconnectOptions`, `ConnectionEvent`. Used by `LabelPrinter`. |
 | `src/status.ts` | Parsers for `~HS` and `~HQES` replies. |
 | `src/transport.ts` | `Transport` interface. |
-| `src/transports/` | `bluetoothClassic.ts` (Nitro), `ble.ts` (+ `blePlxClient` adapter), `tcp.ts`, `inbox.ts`. |
+| `src/transports/` | `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLE` scan/connect + `BluetoothLETransport`, Nitro), `bleGatt.ts` (pure GATT selection), `ble.ts` (older `BleTransport` + `blePlxClient`), `tcp.ts`, `inbox.ts`. |
 | `src/native.ts` | Lazy loading of Nitro objects. `setNativeCodec` / `setClassicBluetooth` for tests. |
 | `src/encoding.ts` | base64, UTF-8, Latin-1 helpers. |
 | `src/errors.ts` | Error classes. |
 | `src/specs/*.nitro.ts` | Nitro specs. The source of truth for native APIs. |
 | `cpp/bplz_core.{hpp,cpp}` | Portable C++17 core: gray, dither, ZPL compress, base64. No Nitro/JSI includes. |
 | `cpp/HybridBplzCodec.{hpp,cpp}` | Nitro HybridObject. Validates input, copies the buffer, runs async. |
-| `android/` | Gradle, CMake, Kotlin HybridObjects (`HybridClassicBluetooth`, `HybridClassicConnection`). |
-| `ios/`, `NitroBplzLabel.podspec` | iOS build setup. No Swift code yet. The C++ codec is shared. |
+| `android/` | Gradle, CMake, Kotlin HybridObjects (`HybridClassicBluetooth`, `HybridClassicConnection`, `HybridBluetoothLE`, `HybridBleConnection`, `BleSupport`). |
+| `ios/`, `NitroBplzLabel.podspec` | Swift HybridObjects with CoreBluetooth (`HybridBluetoothLE`, `HybridBleConnection`, `BleCentral`). The C++ codec is shared. |
 | `nitro.json` | Autolinking map. Add every new HybridObject here. |
 | `nitrogen/generated/` | Generated. Ships in the npm package. |
 | `__tests__/` | Jest tests. |
@@ -58,6 +58,7 @@ Read this file before you change the code. It tells you where things are, how th
 | `scripts/check-cpp.sh` | C++ syntax check against Nitro and JSI headers + warning-free core build. |
 | `scripts/check-kotlin.sh` | Downloads kotlinc and Android jars into `.cache/`, compiles the Kotlin code. |
 | `docs/TEARDOWN.md` | What we learned from the two vendor APKs and the SDK. |
+| `docs/BLE.md` | BLE guide: setup, API, chunking, errors, troubleshooting, manual acceptance test. |
 | `docs/REFERENCES.md` | Verification record. What was checked, what was only compiled, what is unchecked. |
 
 ## Commands
@@ -107,6 +108,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 - Never resend a job after a failed write unless the user set `resendAfterPartialWrite`. A resend can print twice.
 - A transport must throw `TransportError` with a `code`. Codes in `TRANSIENT` (`src/reconnect.ts`) are retried. Give an error that the user must fix its own code, so it is not retried.
 - Android messages from Kotlin are mapped to codes in `classify()` in `src/transports/bluetoothClassic.ts`. If you change a Kotlin error message, change `classify()` too.
+- BLE native errors (Kotlin and Swift) start with a code in square brackets: `[E_BLUETOOTH_OFF] Bluetooth is off`. `classify()` in `src/transports/bluetoothLE.ts` reads it. Keep the codes of the two platforms the same. A new code that the user must fix must stay out of `TRANSIENT`.
 - ONE retry layer: `LabelPrinter` + `src/reconnect.ts`, built on `cockatiel` (RetryPolicy, ExponentialBackoff, decorrelated jitter). Do not add retry inside a transport or add a second retry library. Do not hand-roll backoff.
 - cockatiel `maxAttempts` counts retries, ours counts the first try too (`maxAttempts - 1`).
 - Delay defaults (300 ms, x2, cap 2 s) are our choice and are not tested on the printer.
@@ -118,7 +120,8 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 - BPLZ and BPLC use a top-left origin. BPLA uses a bottom-left origin.
 - The unit's real command language is NOT confirmed. The printer self-test prints a COMMAND line that tells which language is active.
 - Android SDK Classic Bluetooth: SPP UUID `00001101-0000-1000-8000-00805F9B34FB`, secure socket first, then insecure, 1024-byte chunks.
-- The printer's BLE GATT UUIDs are unknown. Callers must pass them to `BleTransport`.
+- BLE: NO UUID, name, MAC or PIN is built in, and none may be added to `src/`, `android/` or `ios/`. `BluetoothLETransport` reads the GATT table after the connect and chooses with `selectCharacteristics()`. A caller can pin UUIDs or pass `select()`. UUIDs of one printer may appear only in tests and docs, marked as examples.
+- BLE on one TVS LP 46 Dlite: a user wrote BPLZ by hand to a writable characteristic (nRF Connect) and it printed. Our own code was not run on it.
 - Labelary quirk: a `^PW` narrower than the label centers the print area. Remove `^PW`/`^LL` when you compare pixels.
 
 ## Verification status
@@ -131,7 +134,10 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | C++ vs TS reference | Differential tests in `__tests__/native-parity.test.ts`. |
 | C++ vs Nitro/JSI headers | Syntax check only. Not run in a real app. |
 | Kotlin | Compiled with kotlinc against Android API jar. Not run on a device. |
-| BLE adapter | Type-checked against `react-native-ble-plx` 3.5.1. Not run. |
+| BLE adapter (`blePlxClient`) | Type-checked against `react-native-ble-plx` 3.5.1. Not run. |
+| Native BLE (TypeScript) | Unit-tested with a fake native layer. |
+| Native BLE (Kotlin) | Compiled with kotlinc against the Android API jar. Not run on a device. |
+| Native BLE (Swift / CoreBluetooth) | NOT compiled, NOT run. No Swift toolchain here. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` replies | NOT verified on the printer. |
@@ -140,11 +146,13 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 ## Open items
 
 - Get the printer self-test COMMAND line (language).
-- Scan the printer with nRF Connect to find BLE service and characteristic UUIDs.
+- Run the BLE manual acceptance test in `docs/BLE.md` on Android and iOS with the real printer.
+- Compile the Swift files on a Mac (`pod install` and an Xcode build).
 - Confirm label size in mm.
 - Test on a real device and printer: Bluetooth Classic, BLE, TCP.
 - Confirm BPLA units and framing.
 - Add iOS-side tests when a Mac build is available.
+- Check on a device that Android calls `onCharacteristicWrite` for write without response, and tune the BLE defaults.
 
 ## Style
 

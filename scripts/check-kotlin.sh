@@ -60,4 +60,6 @@ echo "== kotlinc $KOTLIN_VERSION: our HybridObjects + generated specs + Nitro so
   "$C"/stubs/*.kt 2>&1 | grep -v '^Picked up' || true
 test -f "$OUT/com/margelo/nitro/bplzlabel/HybridClassicBluetooth.class"
 test -f "$OUT/com/margelo/nitro/bplzlabel/HybridClassicConnection.class"
+test -f "$OUT/com/margelo/nitro/bplzlabel/HybridBluetoothLE.class"
+test -f "$OUT/com/margelo/nitro/bplzlabel/HybridBleConnection.class"
 echo "Kotlin OK"

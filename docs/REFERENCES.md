@@ -22,12 +22,31 @@ so you know how far to trust it.
 | BPLA text record layout | Datamax DPL record table (rotation, font, width mult, height mult, size, row, column) and the format strings inside SNBC's own library | Same layout. |
 | BPLC (CPCL) | Zebra and Brother CPCL manuals; command strings inside SNBC's library | Same commands. |
 
+## BLE (native `BluetoothLE` and `BluetoothLETransport`)
+
+Sources for the platform calls (official docs; the pages were not fetched again during this change, so check them when you change the code):
+- Android: `BluetoothLeScanner`, `ScanSettings`, `ScanFilter`, `BluetoothGatt` (`connectGatt`, `discoverServices`, `requestMtu`, `writeCharacteristic`, `writeDescriptor`, `requestConnectionPriority`), `BluetoothGattCallback`,
+  [Bluetooth permissions](https://developer.android.com/develop/connectivity/bluetooth/bt-permissions) (`BLUETOOTH_SCAN` with `neverForLocation`, `BLUETOOTH_CONNECT`, location up to Android 11).
+- Android rule used for flow control: one GATT operation at a time; wait for `onCharacteristicWrite` before the next write.
+- iOS: `CBCentralManager` (`scanForPeripherals`, `connect`, `retrievePeripherals(withIdentifiers:)`), `CBPeripheral` (`maximumWriteValueLength(for:)`, `canSendWriteWithoutResponse`,
+  `peripheralIsReady(toSendWriteWithoutResponse:)`, `writeValue(_:for:type:)`, `setNotifyValue`), `CBATTError`, `CBError.peerRemovedPairingInformation`.
+- The Nitro Swift and Kotlin API (`Promise`, `ArrayBuffer`) was read in `node_modules/react-native-nitro-modules`.
+- Bluetooth SIG: 16-bit UUIDs 1800, 1801, 180A (Generic Access, Generic Attribute, Device Information) and the Bluetooth base UUID `0000xxxx-0000-1000-8000-00805f9b34fb`.
+
+Status:
+- TypeScript logic (scan mapping, GATT selection, MTU and piece size, chunking, flow control, timeouts, cancel, link loss, reconnect through `LabelPrinter`, error codes) is unit-tested with a fake native layer: `__tests__/bluetoothLE.test.ts`.
+- Kotlin (`HybridBluetoothLE`, `HybridBleConnection`) compiles with `kotlinc` against the Android 14 API (`scripts/check-kotlin.sh`). Not run on a device.
+- Swift (`ios/*.swift`) was written against the generated Nitro Swift specs. It is NOT compiled: there is no Swift toolchain in this environment or in CI.
+- The selection rule (score +4 / +2 / +1) and the defaults (MTU request 247, 10 ms delay for writes without response, 5 s write timeout, 10 s connect timeout, 15 s discovery timeout) are our choices. They are not from a source and not tuned on a printer.
+- A user reported (manual test with nRF Connect and a hand-written BPLZ payload, not run by this package) that one TVS LP 46 Dlite prints over BLE. That is the only hardware evidence.
+- Android: the code assumes `onCharacteristicWrite` also fires for "write without response" (this is how the stack works as far as we know). Not checked on a device.
+
 ## Compiled, not run
 
 - **C++:** `HybridBplzCodec` and the core compile against the real Nitro and JSI headers (`g++ -std=c++20 -fsyntax-only`).
   The core is also built and run on the host, and compared with the TypeScript reference on random data
   (`__tests__/native-parity.test.ts`).
-- **Kotlin:** `HybridClassicBluetooth` and `HybridClassicConnection` compile with `kotlinc` 2.1.21 against the Android 14
+- **Kotlin:** `HybridClassicBluetooth`, `HybridClassicConnection`, `HybridBluetoothLE` and `HybridBleConnection` compile with `kotlinc` 2.1.21 against the Android 14
   API jar, the real Nitro Kotlin sources and the real `react-android` 0.87.1 classes. Only two annotations were stubbed.
 
 ## Not checked
@@ -36,7 +55,8 @@ so you know how far to trust it.
 - The Android and iOS native builds (Gradle, CMake, Xcode). The build files come from the official scaffold.
 - The BPLA row and column units, and the `Q`, `E`, `<STX>L` framing.
 - The `~HS` and `~HQES` replies of the SNBC firmware.
-- The GATT UUIDs of the printer's BLE module.
+- BLE on a real phone and printer (Android and iOS), with this package's own code. See the manual test in [BLE.md](BLE.md).
+- The Swift code: it was never compiled.
 - Speed on Hermes or on a phone CPU. `npm run bench` measures Node (V8) only.
 
 ## Reconnect design

@@ -12,5 +12,15 @@ import NitroModules
 public final class NitroBplzLabelAutolinking {
   public typealias bridge = margelo.nitro.bplzlabel.bridge.swift
 
+  public static func createBluetoothLE() -> bridge.std__shared_ptr_HybridBluetoothLESpec_ {
+    let hybridObject = HybridBluetoothLE()
+    return { () -> bridge.std__shared_ptr_HybridBluetoothLESpec_ in
+      let __cxxWrapped = hybridObject.getCxxWrapper()
+      return __cxxWrapped.getCxxPart()
+    }()
+  }
   
+  public static func isBluetoothLERecyclable() -> Bool {
+    return HybridBluetoothLE.self is any RecyclableView.Type
+  }
 }

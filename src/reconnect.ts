@@ -63,7 +63,7 @@ export function resolveReconnect(o: ReconnectOptions | boolean | undefined): Res
 }
 
 /** Codes where a new attempt can help. Everything else needs the user to act (permission, Bluetooth off, wrong address). */
-const TRANSIENT = new Set(['E_CONNECT', 'E_NOT_CONNECTED', 'E_TIMEOUT', 'E_WRITE', 'E_READ', 'E_DISCONNECTED']);
+const TRANSIENT = new Set(['E_CONNECT', 'E_NOT_CONNECTED', 'E_TIMEOUT', 'E_WRITE', 'E_READ', 'E_DISCONNECTED', 'E_DISCOVERY']);
 
 export function isTransient(e: unknown): boolean {
   if (e instanceof UnsupportedPlatformError || e instanceof NativeModuleMissingError) return false;

@@ -14,15 +14,16 @@ This package has no link with SNBC or TVS. It has no SNBC code or binaries.
 ## Status. Read this first.
 
 - **Nothing is tested on a real printer.** See [docs/REFERENCES.md](docs/REFERENCES.md) for what each part was checked against.
-- The TypeScript code is type-checked (strict) and unit-tested (62 tests). The C++ core is compared with a TypeScript reference on random data.
+- The TypeScript code is type-checked (strict) and unit-tested. The C++ core is compared with a TypeScript reference on random data.
 - The Kotlin code compiles against the Android 14 API and the real Nitro sources. It has not run on a device.
 - Find the real command set first: print the self-test label and read the `COMMAND` line.
-- BLE needs the printer's GATT UUIDs. They are not known. Use `BleTransport.discover()`.
+- BLE: `BluetoothLETransport` finds the GATT table at run time. No UUID is built in. See [docs/BLE.md](docs/BLE.md). Its Kotlin code compiles; its Swift code is not compiled yet; nothing ran on a device or printer.
 
 ## How it is built
 
 - The image work (dither, ZPL compression) is C++ (`cpp/`), shared by Android and iOS, called through [Nitro Modules](https://nitro.margelo.com). Bytes cross as `ArrayBuffer`, with no base64 step, and the work runs off the JS thread.
 - Bluetooth Classic is a Kotlin Nitro object (`ClassicBluetooth` and `ClassicConnection`).
+- Bluetooth Low Energy is a Nitro object too (`BluetoothLE` and `BleConnection`): Kotlin on Android (`BluetoothLeScanner`, `BluetoothGatt`), Swift on iOS (CoreBluetooth).
 - There is **no JavaScript copy** of the native code. If the native module is missing you get a `NativeModuleMissingError`, not a slow silent path. The TypeScript reference lives in `test/reference/` and only checks the C++.
 - Label builders (`ZplLabel`, `CpclLabel`, `BplaLabel`) and the transports are TypeScript. They are not hot paths.
 
@@ -31,16 +32,16 @@ This package has no link with SNBC or TVS. It has no SNBC code or binaries.
 | Link | Android | iOS |
 | --- | --- | --- |
 | Bluetooth Classic (SPP) | yes (`BluetoothClassicTransport`) | **no.** Apple allows it only with MFi. |
-| BLE | yes (`BleTransport`) | yes (`BleTransport`) |
+| BLE | yes (`BluetoothLETransport`) | yes (`BluetoothLETransport`) |
 | TCP port 9100 (Ethernet / WiFi option) | yes | yes |
 
-SNBC's own SDK has a BLE port type for iOS, so a BLE module is likely. Check with nRF Connect.
+The TVS LP 46 Dlite has a BLE module. The BLE code does not need its UUIDs: it reads the GATT table after the connect. See [docs/BLE.md](docs/BLE.md).
 
 ## Install
 
 ```sh
 npm install react-native-bplz-label-printer react-native-nitro-modules
-npm install react-native-ble-plx        # only for BLE
+npm install react-native-ble-plx        # only for the older BleTransport. BluetoothLETransport does not need it
 npm install react-native-tcp-socket     # only for TCP
 cd ios && pod install
 ```
@@ -49,12 +50,13 @@ The native code needs a development build. It does not run in Expo Go.
 
 ### iOS settings (Info.plist)
 
-- BLE: `NSBluetoothAlwaysUsageDescription`.
+- BLE: `NSBluetoothAlwaysUsageDescription` (iOS shows the dialog at the first scan or connect).
 - TCP to a printer on the local network: `NSLocalNetworkUsageDescription`.
 
 ### Android permissions
 
-The library adds `BLUETOOTH_CONNECT` (Android 12+) and the old `BLUETOOTH` permissions. Call `BluetoothClassic.requestPermissions()` before you list devices.
+The library adds `BLUETOOTH_CONNECT` and `BLUETOOTH_SCAN` (Android 12+), `ACCESS_FINE_LOCATION` (Android 11 and older, for BLE scans) and the old `BLUETOOTH` permissions.
+Call `BluetoothClassic.requestPermissions()` before you list paired devices. Call `BluetoothLE.requestPermissions()` before a BLE scan.
 
 ## Use
 
@@ -116,13 +118,20 @@ To send a logo once and reuse it: `lp.print(zplDownloadImage('logo', bitmap, bod
 ### BLE
 
 ```ts
-import { BleManager } from 'react-native-ble-plx';
-const transport = new BleTransport({
-  deviceId,                                   // MAC on Android, UUID on iOS
-  client: blePlxClient(new BleManager(), { requestMtu: 185 }),
-  chunkSize: 20,                              // raise it when the MTU is larger
-});
-console.log(await transport.discover());      // find the GATT UUIDs
+import { BluetoothLE, BluetoothLETransport, bleFilters, LabelPrinter } from 'react-native-bplz-label-printer';
+
+await BluetoothLE.requestPermissions();
+const devices = await BluetoothLE.scan({ timeoutMs: 6000, filter: bleFilters.name(/LP ?46/i) });
+const lp = new LabelPrinter(new BluetoothLETransport(devices[0]!)); // finds the write characteristic by itself
+await lp.print(label);
+```
+
+Scan, GATT discovery, write type, piece size, flow control, errors, troubleshooting and a manual test plan: [docs/BLE.md](docs/BLE.md).
+
+The older `BleTransport` with `react-native-ble-plx` still works:
+
+```ts
+const transport = new BleTransport({ deviceId, client: blePlxClient(new BleManager(), { requestMtu: 185 }) });
 ```
 
 ### TCP

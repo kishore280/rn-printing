@@ -33,10 +33,14 @@ target_sources(
   # Autolinking Setup
   ../nitrogen/generated/android/NitroBplzLabelOnLoad.cpp
   # Shared Nitrogen C++ sources
+  ../nitrogen/generated/shared/c++/HybridBleConnectionSpec.cpp
+  ../nitrogen/generated/shared/c++/HybridBluetoothLESpec.cpp
   ../nitrogen/generated/shared/c++/HybridBplzCodecSpec.cpp
   ../nitrogen/generated/shared/c++/HybridClassicBluetoothSpec.cpp
   ../nitrogen/generated/shared/c++/HybridClassicConnectionSpec.cpp
   # Android-specific Nitrogen C++ sources
+  ../nitrogen/generated/android/c++/JHybridBleConnectionSpec.cpp
+  ../nitrogen/generated/android/c++/JHybridBluetoothLESpec.cpp
   ../nitrogen/generated/android/c++/JHybridClassicBluetoothSpec.cpp
   ../nitrogen/generated/android/c++/JHybridClassicConnectionSpec.cpp
 )

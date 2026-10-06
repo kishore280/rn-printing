@@ -1,0 +1,607 @@
+import { PermissionsAndroid, Platform } from 'react-native';
+import { TransportError, UnsupportedPlatformError } from '../errors';
+import { getBluetoothLE, toArrayBuffer } from '../native';
+import type { BleConnection } from '../specs/BleConnection.nitro';
+import type { BleScanResult } from '../specs/BleScanResult';
+import type { BluetoothLE as NativeBluetoothLE } from '../specs/BluetoothLE.nitro';
+import type { ReadOptions, Transport } from '../transport';
+import {
+  BleGattCharacteristic,
+  BleSelection,
+  BleSelectionOptions,
+  BleSelector,
+  BleWriteMode,
+  describeGatt,
+  normalizeUuid as normalize,
+  selectCharacteristics,
+} from './bleGatt';
+import { Inbox } from './inbox';
+
+// ---------------------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------------------
+
+export type BleAdapterState = 'on' | 'off' | 'unauthorized' | 'unsupported' | 'resetting' | 'unknown';
+
+/** A device seen in a scan. Nothing here says it is a printer. */
+export interface BleDevice {
+  /** Pass it to `BluetoothLE.connect()` or `new BluetoothLETransport()`. Android: MAC. iOS: a UUID made by iOS. */
+  id: string;
+  name: string | null;
+  /** dBm. null when the platform gives none. */
+  rssi: number | null;
+  connectable: boolean;
+  /** Advertised service UUIDs, lower case, 128-bit form. */
+  serviceUuids: string[];
+  /** Hex of the first manufacturer block: 2-byte company id (little endian), then data. null when none. */
+  manufacturerData: string | null;
+  txPower: number | null;
+}
+
+/** The part of `AbortSignal` that this package uses. */
+export interface AbortSignalLike {
+  readonly aborted: boolean;
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: 'abort', listener: () => void): void;
+}
+
+export interface BluetoothLEScanOptions {
+  /** Ask the platform to report only devices that advertise one of these services. Default: all. */
+  serviceUuids?: string[] | undefined;
+  /** Stop after this many ms. Default 5000. 0 means "until stopScan() or the signal". */
+  timeoutMs?: number | undefined;
+  /** Keep updating the RSSI of devices already seen. Default false. */
+  allowDuplicates?: boolean | undefined;
+  /** Keep only devices where this returns true. Runs in TypeScript. See `bleFilters`. */
+  filter?: ((device: BleDevice) => boolean) | undefined;
+  /** Called at once for each new device that passes the filter. Use it to fill a list on screen. */
+  onDevice?: ((device: BleDevice) => void) | undefined;
+  /** Abort to stop the scan. The promise then resolves with the devices found so far. */
+  signal?: AbortSignalLike | undefined;
+}
+
+export interface BleConnectOptions {
+  /** Give up after this many ms. Default 10000. */
+  timeoutMs?: number | undefined;
+}
+
+export type BleConnectionState = 'connecting' | 'connected' | 'disconnecting' | 'disconnected';
+
+export interface BleConnectionStateEvent {
+  state: BleConnectionState;
+  /** Why the link closed. Set when `state` is 'disconnected'. */
+  reason?: string | undefined;
+}
+
+/**
+ * Optional description of one kind of printer. The package has none built in.
+ * Make your own and pass it as `profile`, or use `matches` to find printers in a scan.
+ * Settings in `BluetoothLETransportOptions` win over the profile.
+ */
+export interface BlePrinterProfile extends BleSelectionOptions {
+  /** A label for your own use. */
+  name?: string | undefined;
+  /** The command language the printer speaks. The transport does not use it. */
+  protocol?: 'BPLZ' | 'BPLC' | 'BPLA' | 'ZPL' | 'CPCL' | (string & {}) | undefined;
+  /** Decide whether a scanned device belongs to this profile. */
+  matches?: ((device: BleDevice) => boolean) | undefined;
+  chunkSize?: number | undefined;
+  chunkDelayMs?: number | undefined;
+  requestMtu?: number | false | undefined;
+}
+
+export interface BluetoothLETransportOptions extends BleSelectionOptions {
+  profile?: BlePrinterProfile | undefined;
+  /**
+   * Ask for this ATT MTU after connect. Android only. Default 247. `false` skips the request.
+   * The device can agree to less. The transport uses the agreed value.
+   */
+  requestMtu?: number | false | undefined;
+  /** Upper limit for one write, in bytes. The link limit still applies. Default: the link limit. */
+  chunkSize?: number | undefined;
+  /**
+   * Wait this long between writes, in ms. Default 0 for writes with response.
+   * Default 10 for writes without response, because the printer cannot tell you when its buffer is full.
+   * Neither default is checked on a printer.
+   */
+  chunkDelayMs?: number | undefined;
+  /** Connect timeout in ms. Default 10000. */
+  connectTimeoutMs?: number | undefined;
+  /** Timeout for one write piece in ms. Default 5000. */
+  writeTimeoutMs?: number | undefined;
+  /** Turn on notifications for printer replies (status queries). Default true. */
+  subscribe?: boolean | undefined;
+}
+
+export interface BleWriteOptions {
+  /** Abort to stop a long write between pieces. The write rejects with code E_CANCELLED. */
+  signal?: AbortSignalLike | undefined;
+  /** Called after each piece. */
+  onProgress?: ((sentBytes: number, totalBytes: number) => void) | undefined;
+}
+
+// ---------------------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Nitro passes only the message of a native error. The native side puts a code first,
+ * like `[E_BLUETOOTH_OFF] Bluetooth is off`. If you change a code there, change this too.
+ * Errors that the user must fix keep their own code, so the reconnect logic does not retry them.
+ */
+export function classify(error: unknown, fallback: string): TransportError {
+  if (error instanceof TransportError) return error;
+  const raw = error instanceof Error ? error.message : String(error);
+  const m = /^\s*\[(E_[A-Z_]+)\]\s*([\s\S]*)$/.exec(raw);
+  return m ? new TransportError(m[2] ?? raw, m[1]) : new TransportError(raw, fallback);
+}
+
+async function wrap<T>(job: Promise<T> | T, fallback: string): Promise<T> {
+  try {
+    return await job;
+  } catch (e) {
+    throw classify(e, fallback);
+  }
+}
+
+function native(): NativeBluetoothLE {
+  const mod = getBluetoothLE();
+  if (!mod) {
+    throw new UnsupportedPlatformError(
+      'The native BLE object is not available. Rebuild the app after installing the package, and do not use Expo Go.'
+    );
+  }
+  return mod;
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function toDevice(r: BleScanResult): BleDevice {
+  return {
+    id: r.id,
+    name: r.name === '' ? null : r.name,
+    rssi: r.rssi ?? null,
+    connectable: r.connectable,
+    serviceUuids: r.serviceUuids,
+    manufacturerData: r.manufacturerData === '' ? null : r.manufacturerData,
+    txPower: r.txPower ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------------------
+
+/** Small building blocks for `BluetoothLEScanOptions.filter`. The package does not pick printers for you. */
+export const bleFilters = {
+  /** Name contains the text (case does not matter), or matches the RegExp. */
+  name(pattern: string | RegExp): (d: BleDevice) => boolean {
+    return (d) => {
+      if (d.name === null) return false;
+      return typeof pattern === 'string' ? d.name.toLowerCase().includes(pattern.toLowerCase()) : pattern.test(d.name);
+    };
+  },
+  /** The advertisement lists this service. */
+  serviceUuid(uuid: string): (d: BleDevice) => boolean {
+    const wanted = normalize(uuid);
+    return (d) => d.serviceUuids.some((s) => normalize(s) === wanted);
+  },
+  /** The manufacturer data starts with these hex bytes (the company id comes first, little endian). */
+  manufacturerData(prefixHex: string): (d: BleDevice) => boolean {
+    const wanted = prefixHex.toLowerCase();
+    return (d) => d.manufacturerData?.startsWith(wanted) ?? false;
+  },
+  /** RSSI is at least this value (dBm). Devices without RSSI do not pass. */
+  minRssi(dbm: number): (d: BleDevice) => boolean {
+    return (d) => d.rssi !== null && d.rssi >= dbm;
+  },
+  all(...filters: Array<(d: BleDevice) => boolean>): (d: BleDevice) => boolean {
+    return (d) => filters.every((f) => f(d));
+  },
+  any(...filters: Array<(d: BleDevice) => boolean>): (d: BleDevice) => boolean {
+    return (d) => filters.some((f) => f(d));
+  },
+};
+
+// ---------------------------------------------------------------------------------------
+// BluetoothLE: scan and connect
+// ---------------------------------------------------------------------------------------
+
+/** An open GATT link from `BluetoothLE.connect()`. Use it to look at the GATT table. */
+export class BleDeviceConnection {
+  constructor(
+    private readonly link: BleConnection,
+    private readonly disconnectListeners: Set<(reason: string) => void>
+  ) {}
+
+  get id(): string {
+    return this.link.id;
+  }
+
+  get isConnected(): boolean {
+    return this.link.isConnected;
+  }
+
+  /** The agreed MTU, or an estimate on iOS (largest write without response + 3). */
+  get mtu(): number {
+    return this.link.mtu;
+  }
+
+  /** All services and characteristics, with their properties. */
+  discover(): Promise<BleGattCharacteristic[]> {
+    return wrap(this.link.discover(), 'E_DISCOVERY');
+  }
+
+  /** The GATT table as text. */
+  async describe(): Promise<string> {
+    return describeGatt(await this.discover());
+  }
+
+  /** Called once when the link closes, also after `disconnect()`. Returns a function that removes the listener. */
+  onDisconnect(listener: (reason: string) => void): () => void {
+    this.disconnectListeners.add(listener);
+    return () => this.disconnectListeners.delete(listener);
+  }
+
+  disconnect(): Promise<void> {
+    return wrap(this.link.disconnect(), 'E_DISCONNECTED');
+  }
+}
+
+const stateListeners = new Set<(state: BleAdapterState) => void>();
+let stateHooked = false;
+
+/** Scan for and connect to Bluetooth Low Energy devices. It knows nothing about printers. */
+export const BluetoothLE = {
+  isSupported(): boolean {
+    return getBluetoothLE() !== null;
+  },
+
+  /**
+   * Ask for the runtime permissions. Android 12+: BLUETOOTH_SCAN and BLUETOOTH_CONNECT.
+   * Android 11 and older: ACCESS_FINE_LOCATION (Android needs it to scan; the library does not read your location).
+   * iOS: nothing to ask. iOS shows the dialog at the first scan or connect. Returns true when allowed.
+   */
+  async requestPermissions(): Promise<boolean> {
+    if (Platform.OS !== 'android') return BluetoothLE.getState() !== 'unauthorized';
+    const permissions =
+      typeof Platform.Version === 'number' && Platform.Version >= 31
+        ? ['android.permission.BLUETOOTH_SCAN', 'android.permission.BLUETOOTH_CONNECT']
+        : ['android.permission.ACCESS_FINE_LOCATION'];
+    const result = await PermissionsAndroid.requestMultiple(permissions as Parameters<typeof PermissionsAndroid.requestMultiple>[0]);
+    return permissions.every((p) => (result as Record<string, string>)[p] === PermissionsAndroid.RESULTS.GRANTED);
+  },
+
+  /** The adapter state: on, off, unauthorized, unsupported, resetting or unknown. */
+  getState(): BleAdapterState {
+    return native().getState() as BleAdapterState;
+  },
+
+  /** Be told when Bluetooth turns on or off, or the permission changes. Returns a function that removes the listener. */
+  onStateChange(listener: (state: BleAdapterState) => void): () => void {
+    const mod = native();
+    stateListeners.add(listener);
+    if (!stateHooked) {
+      stateHooked = true;
+      mod.setStateListener((s) => {
+        for (const l of [...stateListeners]) l(s as BleAdapterState);
+      });
+    } else {
+      const current = mod.getState() as BleAdapterState;
+      if (current !== 'unknown') listener(current);
+    }
+    return () => stateListeners.delete(listener);
+  },
+
+  /**
+   * Scan and return the devices found, strongest RSSI first. Rejects when the scan cannot start
+   * (Bluetooth off, no permission). Does not decide what a printer is: use `filter`.
+   * `stopScan()` and `signal` end the scan early. The promise then resolves with the devices found so far.
+   */
+  async scan(options: BluetoothLEScanOptions = {}): Promise<BleDevice[]> {
+    const mod = native();
+    const found = new Map<string, BleDevice>();
+    const { filter, onDevice, signal } = options;
+    const onAbort = () => void mod.stopScan().catch(() => undefined);
+    if (signal?.aborted) return [];
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      await wrap(
+        mod.scan(
+          {
+            serviceUuids: options.serviceUuids ?? [],
+            timeoutMs: options.timeoutMs ?? 5000,
+            allowDuplicates: options.allowDuplicates ?? false,
+          },
+          (result) => {
+            const device = toDevice(result);
+            if (filter && !filter(device)) return;
+            const isNew = !found.has(device.id);
+            found.set(device.id, device);
+            if (isNew) onDevice?.(device);
+          }
+        ),
+        'E_SCAN_FAILED'
+      );
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
+    return [...found.values()].sort((a, b) => (b.rssi ?? -Infinity) - (a.rssi ?? -Infinity));
+  },
+
+  /** End a running scan. `scan()` then resolves with what it found. */
+  stopScan(): Promise<void> {
+    return wrap(native().stopScan(), 'E_SCAN_FAILED');
+  },
+
+  /** Open a GATT link, for example to look at the GATT table. For printing, use `BluetoothLETransport`. */
+  async connect(deviceId: string | BleDevice, options: BleConnectOptions = {}): Promise<BleDeviceConnection> {
+    const listeners = new Set<(reason: string) => void>();
+    const id = typeof deviceId === 'string' ? deviceId : deviceId.id;
+    const link = await wrap(
+      native().connect(id, options.timeoutMs ?? 10000, (reason) => {
+        for (const l of [...listeners]) l(reason);
+      }),
+      'E_CONNECT'
+    );
+    return new BleDeviceConnection(link, listeners);
+  },
+
+  /** Connect, read the GATT table, disconnect. Use it to see what a device offers. */
+  async inspect(deviceId: string | BleDevice, options: BleConnectOptions = {}): Promise<BleGattCharacteristic[]> {
+    const connection = await BluetoothLE.connect(deviceId, options);
+    try {
+      return await connection.discover();
+    } finally {
+      await connection.disconnect().catch(() => undefined);
+    }
+  },
+
+  /** The first profile whose `matches` accepts the device, or undefined. */
+  matchProfile(device: BleDevice, profiles: readonly BlePrinterProfile[]): BlePrinterProfile | undefined {
+    return profiles.find((p) => p.matches?.(device));
+  },
+};
+
+// ---------------------------------------------------------------------------------------
+// The transport
+// ---------------------------------------------------------------------------------------
+
+const LOWEST_PAYLOAD = 20; // the smallest BLE packet: MTU 23 minus 3
+
+/**
+ * Sends printer bytes over Bluetooth Low Energy. It works on Android and iOS and knows nothing
+ * about the command language: it moves bytes. No UUID is built in. After the link is up it reads
+ * the GATT table from the device and picks the characteristics (see `selectCharacteristics`).
+ *
+ * `LabelPrinter` reconnects through `connect()`. This class has no retry loop of its own.
+ */
+export class BluetoothLETransport implements Transport {
+  private readonly deviceId: string;
+  private readonly settings: BluetoothLETransportOptions;
+  private readonly inbox = new Inbox();
+  private readonly stateListeners = new Set<(event: BleConnectionStateEvent) => void>();
+
+  private link: BleConnection | null = null;
+  private state: BleConnectionState = 'disconnected';
+  private picked: BleSelection | null = null;
+  private table: BleGattCharacteristic[] = [];
+  private writeChain: Promise<unknown> = Promise.resolve();
+  private generation = 0;
+  private lostReason: string | null = null;
+  private cancelled = false;
+  private unsubscribe: (() => Promise<void>) | null = null;
+
+  /** `device` is a scan result or its id. The transport opens its own link, so it can open it again later. */
+  constructor(device: string | { id: string }, options: BluetoothLETransportOptions = {}) {
+    this.deviceId = typeof device === 'string' ? device : device.id;
+    const p = options.profile;
+    // Options win over the profile.
+    this.settings = { ...stripUndefined(p ?? {}), ...stripUndefined(options) };
+  }
+
+  /** The characteristic table found on the last connect. Empty before the first connect. */
+  get gatt(): readonly BleGattCharacteristic[] {
+    return this.table;
+  }
+
+  /** What the transport chose to write to and listen on. null when not connected. */
+  get selection(): BleSelection | null {
+    return this.picked;
+  }
+
+  get connectionState(): BleConnectionState {
+    return this.state;
+  }
+
+  /** Be told about connect, disconnect and unexpected link loss. Returns a function that removes the listener. */
+  onConnectionState(listener: (event: BleConnectionStateEvent) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  /** Stop the write that runs now, between two pieces. The write rejects with E_CANCELLED. */
+  cancel(): void {
+    this.cancelled = true;
+  }
+
+  async connect(): Promise<void> {
+    await this.disconnect();
+    const mod = native();
+    const gen = ++this.generation;
+    this.lostReason = null;
+    this.cancelled = false;
+    this.setState('connecting');
+    let link: BleConnection | null = null;
+    try {
+      link = await wrap(
+        mod.connect(this.deviceId, this.settings.connectTimeoutMs ?? 10000, (reason) => this.onLinkLost(gen, reason)),
+        'E_CONNECT'
+      );
+      this.link = link;
+
+      const wanted = this.settings.requestMtu ?? 247;
+      if (wanted !== false && Platform.OS === 'android') {
+        // A refused request is fine. The link then keeps the default MTU, and the chunk size follows it.
+        await link.requestMtu(wanted).catch(() => undefined);
+      }
+
+      this.table = [...(await wrap(link.discover(), 'E_DISCOVERY'))];
+      this.picked = selectCharacteristics(this.table, this.settings);
+
+      const notify = this.settings.subscribe === false ? null : this.picked.notify;
+      if (notify) {
+        const { serviceUuid, uuid } = notify;
+        const active = link;
+        try {
+          await wrap(
+            active.subscribe(serviceUuid, uuid, (data) => this.inbox.push(new Uint8Array(data))),
+            'E_NOTIFY'
+          );
+          this.unsubscribe = () => active.unsubscribe(serviceUuid, uuid);
+        } catch {
+          // Printing works without replies. Only status queries are lost.
+          this.unsubscribe = null;
+        }
+      }
+      if (gen !== this.generation) throw new TransportError('The connection was closed while it opened', 'E_DISCONNECTED');
+      this.setState('connected');
+    } catch (e) {
+      this.link = null;
+      this.picked = null;
+      if (link) await link.disconnect().catch(() => undefined);
+      this.setState('disconnected', e instanceof Error ? e.message : String(e));
+      throw classify(e, 'E_CONNECT');
+    }
+  }
+
+  /** Close the link and connect again. Not a retry loop: it runs once, when you call it. */
+  async reconnect(): Promise<void> {
+    await this.disconnect();
+    await this.connect();
+  }
+
+  async disconnect(): Promise<void> {
+    const link = this.link;
+    this.generation++; // late callbacks from the old link are ignored
+    this.link = null;
+    this.picked = null;
+    this.inbox.clear();
+    const unsubscribe = this.unsubscribe;
+    this.unsubscribe = null;
+    if (!link) return;
+    this.setState('disconnecting');
+    await unsubscribe?.().catch(() => undefined);
+    try {
+      await wrap(link.disconnect(), 'E_DISCONNECTED');
+    } finally {
+      this.setState('disconnected', 'requested');
+    }
+  }
+
+  async isConnected(): Promise<boolean> {
+    return this.link !== null && this.state === 'connected' && this.link.isConnected;
+  }
+
+  /**
+   * Send bytes, unchanged. Splits them to the largest piece the link takes, sends one piece at a time and
+   * waits for the stack before the next (flow control). Rejects with E_TIMEOUT, E_DISCONNECTED, E_CANCELLED or E_WRITE.
+   */
+  write(data: Uint8Array, options: BleWriteOptions = {}): Promise<void> {
+    const run = this.writeChain.then(() => this.writeNow(data, options));
+    this.writeChain = run.catch(() => undefined);
+    return run;
+  }
+
+  read(options: ReadOptions = {}): Promise<Uint8Array> {
+    return this.inbox.read(options);
+  }
+
+  /** Bytes per write on the current link. */
+  get payloadSize(): number {
+    const link = this.link;
+    const pick = this.picked;
+    if (!link || !pick) return LOWEST_PAYLOAD;
+    const limit = link.maxWriteLength(pick.withResponse);
+    const native = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : LOWEST_PAYLOAD;
+    const cap = this.settings.chunkSize;
+    return Math.max(1, cap !== undefined ? Math.min(cap, native) : native);
+  }
+
+  // ---- internals ----
+
+  private async writeNow(data: Uint8Array, options: BleWriteOptions): Promise<void> {
+    const link = this.link;
+    const pick = this.picked;
+    if (!link || !pick || this.state !== 'connected') throw new TransportError('Not connected', 'E_NOT_CONNECTED');
+    this.cancelled = false;
+    const gen = this.generation;
+    const size = this.payloadSize;
+    const delay = this.settings.chunkDelayMs ?? (pick.withResponse ? 0 : 10);
+    const timeoutMs = this.settings.writeTimeoutMs ?? 5000;
+
+    for (let offset = 0; offset < data.length; offset += size) {
+      if (this.cancelled || options.signal?.aborted) {
+        throw new TransportError(`Write cancelled after ${offset} of ${data.length} bytes`, 'E_CANCELLED');
+      }
+      if (gen !== this.generation || !link.isConnected) {
+        throw new TransportError(`The device disconnected after ${offset} of ${data.length} bytes: ${this.lostReason ?? 'link lost'}`, 'E_DISCONNECTED');
+      }
+      const piece = data.subarray(offset, Math.min(offset + size, data.length));
+      await this.writePiece(link, pick, piece, timeoutMs, offset, data.length);
+      options.onProgress?.(offset + piece.length, data.length);
+      if (delay > 0 && offset + size < data.length) await sleep(delay);
+    }
+  }
+
+  private async writePiece(
+    link: BleConnection,
+    pick: BleSelection,
+    piece: Uint8Array,
+    timeoutMs: number,
+    offset: number,
+    total: number
+  ): Promise<void> {
+    // The native side has its own timeout. This one is a guard in case a native promise never settles.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const guard = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new TransportError(`Write timed out after ${timeoutMs} ms (${offset} of ${total} bytes sent)`, 'E_TIMEOUT')),
+        timeoutMs + 1000
+      );
+    });
+    try {
+      await Promise.race([
+        wrap(link.write(pick.write.serviceUuid, pick.write.uuid, toArrayBuffer(piece), pick.withResponse, timeoutMs), 'E_WRITE'),
+        guard,
+      ]);
+    } catch (e) {
+      const error = classify(e, 'E_WRITE');
+      throw new TransportError(`${error.message} (${offset} of ${total} bytes sent)`, error.code);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private onLinkLost(gen: number, reason: string): void {
+    if (gen !== this.generation) return; // an old link, or a close that we asked for
+    this.lostReason = reason;
+    this.link = null;
+    this.picked = null;
+    this.unsubscribe = null;
+    this.setState('disconnected', reason);
+  }
+
+  private setState(state: BleConnectionState, reason?: string): void {
+    this.state = state;
+    for (const l of [...this.stateListeners]) l({ state, reason });
+  }
+}
+
+function stripUndefined<T extends object>(o: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) out[k] = v;
+  return out as T;
+}
+
+export type { BleSelection, BleSelectionOptions, BleSelector, BleWriteMode, BleGattCharacteristic };

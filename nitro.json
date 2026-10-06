@@ -1,11 +1,15 @@
 {
   "$schema": "https://nitro.margelo.com/nitro.schema.json",
-  "cxxNamespace": ["bplzlabel"],
+  "cxxNamespace": [
+    "bplzlabel"
+  ],
   "ios": {
     "iosModuleName": "NitroBplzLabel"
   },
   "android": {
-    "androidNamespace": ["bplzlabel"],
+    "androidNamespace": [
+      "bplzlabel"
+    ],
     "androidCxxLibName": "NitroBplzLabel"
   },
   "autolinking": {
@@ -20,7 +24,21 @@
         "language": "kotlin",
         "implementationClassName": "HybridClassicBluetooth"
       }
+    },
+    "BluetoothLE": {
+      "android": {
+        "language": "kotlin",
+        "implementationClassName": "HybridBluetoothLE"
+      },
+      "ios": {
+        "language": "swift",
+        "implementationClassName": "HybridBluetoothLE"
+      }
     }
   },
-  "ignorePaths": ["**/node_modules", "example", "lib"]
+  "ignorePaths": [
+    "**/node_modules",
+    "example",
+    "lib"
+  ]
 }
