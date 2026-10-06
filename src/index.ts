@@ -1,6 +1,19 @@
 export { LabelPrinter } from './printer';
 export type { StatusOptions, Printable, PrintAllOptions, WaitForPrinterOptions } from './printer';
 
+export { designToZpl, designToLabel, checkDesign, vegMinimums, vegSymbolZpl } from './design';
+export type {
+  LabelDesign,
+  DesignItem,
+  DesignText,
+  DesignBox,
+  DesignBarcode,
+  DesignQr,
+  DesignVeg,
+  DesignImage,
+  DesignIssue,
+} from './design';
+
 export { parseZpl, validateZpl, decodeGfaData } from './zplParse';
 export type {
   ZplDocument,
