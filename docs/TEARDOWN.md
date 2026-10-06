@@ -83,6 +83,32 @@ What this means for a preview or validator:
 - The SDK does not use `^CF`, `^FB`, `^FW`, `^FT`, `^GFB`, `^A0` or `^FR` together with `^FO` for most text. It uses `^A@` for text. Our own builder uses `^A0`. The printer prints `^A0` (hardware test), so both work.
 - `docs/` has no SNBC list of supported commands. The SDK shows only what SNBC sends. It does not show what the printer rejects.
 
+## 4c. SNBC "LabelPrinter Config Tool (BPLZ&E)" V1.20 and BarPrnTest (BPLA) V3.23 / V4.0
+
+Source: the zip "BPLA&BPLZ debug tools" from snbc.cn (Utility Software). We read the help files (CHM), the language file and the strings of the files. We did not run any program in it.
+
+- **There is no command manual in it.** The help files only explain the tool (port settings, send area, download, EEPROM dialog). They point to "related information" for command help. SNBC does not publish a BPLZ command list here.
+- The tool has a free "send area". It sends the text as typed (text or hex). It prints a test page and queries the version (`~WN01@version~`).
+- **Private SNBC commands** seen in its strings (not Zebra, not documented): `~WN00@eep,r,...` and `~WN00@eep,w,<address>,...` (read and write printer EEPROM), `~WN00@ini,r|w,PrinterName|TphAdj|...`. **We do not send EEPROM writes.** A wrong write can change the printer for good.
+- Other commands it sends: `^XA^JBE^XZ` (format flash?), `^XA^JUS^XZ`, `^XA^WD*:*.*^XZ` (list stored files). Meaning not verified.
+- The language file lists the EEPROM settings by address. This tells us what the printer can be set to, and so which values a label can depend on:
+
+| Setting | Values | Address |
+| --- | --- | --- |
+| Print mode | rewind, tear off, peel off, cut | 0x1C |
+| Paper type | continuous, mark sensing, web (gap) sensing | 0x1C |
+| Sensor | reflective, transmission, automatic | 0x2B |
+| Power-up action | no feed, feed to next label, calibrate | 0x1D |
+| Cover-close action | no feed, feed to next label, set label length, calibrate | 0x1D |
+| Alignment mode | left, center, right | 0x04 |
+| Left and right margin, TPH width | numbers | 0x04, 0x03 |
+| Label length, max label length, max calibration length | numbers | 0x00, 0x1A, 0x19 |
+| Print speed, feed speed, backfeed speed, darkness | numbers | 0x0F, 0x10, 0x11, 0x12 |
+| Serial port | 2400 to 115200 baud, DTR/DSR or Xon/Xoff | 0x20 |
+
+- **Alignment mode (left, center, right) matters for previews.** If the printer is set to center, a label narrower than the print width can print shifted, as Labelary does for `^PW`. Our preview does not model this. Check the unit's setting.
+- Its port file lists `BTP-4200E(U)` (203 dpi) and `BTP-7400 (300 dpi)` as USB names.
+
 ## 4b. BPLC and BPLA command strings (from the native library)
 
 - BPLC is CPCL: `! offset hdpi vdpi height qty`, `PW`, `TEXT/TEXT90/TEXT180/TEXT270 font size x y data`, `SCALE-TEXT`, `BARCODE/VBARCODE type width ratio height x y data`, `BOX`, `LINE`, `CG` (bitmap), `PCX`, `VB PDF-417`, `VB QR x y M n U n` then `MA,data`, `PRINT`.
