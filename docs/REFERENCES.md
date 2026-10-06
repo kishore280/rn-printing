@@ -154,3 +154,5 @@ Decision: ONE retry layer, built on `cockatiel` 3.2.1 (MIT, CJS+ESM, Node >= 16;
 The ble-plx fork ConnectionManager was read and tried, then removed: it only works for BLE, only in a fork, and made two retry layers in one package.
 Checked: retry behavior with a fake transport and fake timers. NOT checked: on a real printer or on Hermes (cockatiel uses setTimeout and AbortSignal; both exist in React Native, not run here).
 Our own parts: which errors are transient, the error-code mapping from Kotlin messages, the no-resend rule, the default delay values.
+
+| BLE `read` and `readGatt()` | Pattern: nRF Connect and other generic GATT clients (discover, read each characteristic with the read property). Android: `BluetoothGatt.readCharacteristic` with `onCharacteristicRead` (two overloads, Android 13 split). iOS: `CBPeripheral.readValue(for:)` and `didUpdateValueFor`. SIG names and decoders: Bluetooth SIG Assigned Numbers, GATT Specification Supplement (short list in `src/transports/sig.ts`). Unit-tested with a fake link. Kotlin compiled, Swift NOT compiled. NOT run on the printer. |

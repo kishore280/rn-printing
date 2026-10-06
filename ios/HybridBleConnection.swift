@@ -59,6 +59,7 @@ class HybridBleConnection: HybridBleConnectionSpec {
   private var writes: [WriteJob] = []
   private var notifyWaiters: [CBCharacteristic: Settle<Void>] = [:]
   private var subscribers: [String: (ArrayBuffer) -> Void] = [:]
+  private var readWaiters: [CBCharacteristic: Settle<ArrayBuffer>] = [:]
 
   init(peripheral: CBPeripheral, central: BleCentral, onDisconnect: @escaping (String) -> Void) {
     self.peripheral = peripheral
@@ -142,6 +143,33 @@ class HybridBleConnection: HybridBleConnectionSpec {
     return settle.promise
   }
 
+  func read(serviceUuid: String, characteristicUuid: String) throws -> Promise<ArrayBuffer> {
+    let settle = Settle<ArrayBuffer>()
+    queue.async {
+      do {
+        guard self.connected else { throw bleError("E_DISCONNECTED", "The device is not connected") }
+        let characteristic = try self.find(serviceUuid, characteristicUuid)
+        guard characteristic.properties.contains(.read) else {
+          throw bleError("E_NOT_READABLE", "The characteristic cannot be read")
+        }
+        if let old = self.readWaiters.removeValue(forKey: characteristic) {
+          old.reject(bleError("E_READ", "Another read started"))
+        }
+        self.readWaiters[characteristic] = settle
+        self.peripheral.readValue(for: characteristic)
+        self.queue.asyncAfter(deadline: .now() + 5) {
+          if let waiter = self.readWaiters[characteristic], waiter === settle {
+            self.readWaiters.removeValue(forKey: characteristic)
+            settle.reject(bleError("E_TIMEOUT", "read timed out after 5000 ms"))
+          }
+        }
+      } catch {
+        settle.reject(error)
+      }
+    }
+    return settle.promise
+  }
+
   func subscribe(serviceUuid: String, characteristicUuid: String, onData: @escaping (_ data: ArrayBuffer) -> Void) throws
     -> Promise<Void> {
     let settle = Settle<Void>()
@@ -210,6 +238,9 @@ class HybridBleConnection: HybridBleConnectionSpec {
     let waiting = notifyWaiters
     notifyWaiters.removeAll()
     for (_, waiter) in waiting { waiter.reject(error) }
+    let reading = readWaiters
+    readWaiters.removeAll()
+    for (_, waiter) in reading { waiter.reject(error) }
     subscribers.removeAll()
     let closers = disconnectWaiters
     disconnectWaiters.removeAll()
@@ -300,6 +331,17 @@ class HybridBleConnection: HybridBleConnectionSpec {
   }
 
   func didUpdateValue(_ characteristic: CBCharacteristic, error: Error?) {
+    // A pending read() takes this update. Otherwise it is a notification.
+    if let waiter = readWaiters.removeValue(forKey: characteristic) {
+      if let error = error {
+        waiter.reject(BleSupport.mapError(error, fallbackCode: "E_READ", action: "Read"))
+      } else if let buffer = try? ArrayBuffer.copy(data: characteristic.value ?? Data()) {
+        waiter.resolve(buffer)
+      } else {
+        waiter.reject(bleError("E_READ", "The value could not be copied"))
+      }
+      return
+    }
     guard error == nil, let value = characteristic.value, let handler = subscribers[key(characteristic)] else { return }
     if let buffer = try? ArrayBuffer.copy(data: value) { handler(buffer) }
   }

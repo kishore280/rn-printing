@@ -61,6 +61,7 @@ namespace margelo::nitro::bplzlabel {
     std::shared_ptr<Promise<std::vector<BleCharacteristic>>> discover() override;
     double maxWriteLength(bool withResponse) override;
     std::shared_ptr<Promise<void>> write(const std::string& serviceUuid, const std::string& characteristicUuid, const std::shared_ptr<ArrayBuffer>& data, bool withResponse, double timeoutMs) override;
+    std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>> read(const std::string& serviceUuid, const std::string& characteristicUuid) override;
     std::shared_ptr<Promise<void>> subscribe(const std::string& serviceUuid, const std::string& characteristicUuid, const std::function<void(const std::shared_ptr<ArrayBuffer>& /* data */)>& onData) override;
     std::shared_ptr<Promise<void>> unsubscribe(const std::string& serviceUuid, const std::string& characteristicUuid) override;
     std::shared_ptr<Promise<void>> disconnect() override;

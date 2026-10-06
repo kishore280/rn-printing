@@ -56,6 +56,13 @@ export interface BleConnection extends HybridObject<{ android: 'kotlin'; ios: 's
   ): Promise<void>
 
   /**
+   * Read the value of ONE characteristic. It must have the read property.
+   * Rejects with `[E_NOT_READABLE]` when it has not, and with `[E_AUTH]` when the device needs pairing first.
+   * For tools that show what a device offers (like nRF Connect). A print job does not need it.
+   */
+  read(serviceUuid: string, characteristicUuid: string): Promise<ArrayBuffer>
+
+  /**
    * Turn on notifications (or indications) for a characteristic and call `onData` for each packet.
    * Replaces an earlier subscription for the same characteristic.
    */

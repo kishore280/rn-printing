@@ -22,6 +22,7 @@ namespace margelo::nitro::bplzlabel {
       prototype.registerHybridMethod("discover", &HybridBleConnectionSpec::discover);
       prototype.registerHybridMethod("maxWriteLength", &HybridBleConnectionSpec::maxWriteLength);
       prototype.registerHybridMethod("write", &HybridBleConnectionSpec::write);
+      prototype.registerHybridMethod("read", &HybridBleConnectionSpec::read);
       prototype.registerHybridMethod("subscribe", &HybridBleConnectionSpec::subscribe);
       prototype.registerHybridMethod("unsubscribe", &HybridBleConnectionSpec::unsubscribe);
       prototype.registerHybridMethod("disconnect", &HybridBleConnectionSpec::disconnect);

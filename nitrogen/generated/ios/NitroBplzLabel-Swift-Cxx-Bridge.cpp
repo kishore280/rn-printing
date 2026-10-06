@@ -47,11 +47,11 @@ namespace margelo::nitro::bplzlabel::bridge::swift {
     };
   }
   
-  // pragma MARK: std::function<void(const std::shared_ptr<ArrayBuffer>& /* data */)>
+  // pragma MARK: std::function<void(const std::shared_ptr<ArrayBuffer>& /* result */)>
   Func_void_std__shared_ptr_ArrayBuffer_ create_Func_void_std__shared_ptr_ArrayBuffer_(void* NON_NULL swiftClosureWrapper) noexcept {
     auto swiftClosure = NitroBplzLabel::Func_void_std__shared_ptr_ArrayBuffer_::fromUnsafe(swiftClosureWrapper);
-    return [swiftClosure = std::move(swiftClosure)](const std::shared_ptr<ArrayBuffer>& data) mutable -> void {
-      swiftClosure.call(ArrayBufferHolder(data));
+    return [swiftClosure = std::move(swiftClosure)](const std::shared_ptr<ArrayBuffer>& result) mutable -> void {
+      swiftClosure.call(ArrayBufferHolder(result));
     };
   }
   

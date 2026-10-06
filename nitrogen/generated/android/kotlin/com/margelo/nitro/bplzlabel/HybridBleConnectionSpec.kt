@@ -61,6 +61,10 @@ abstract class HybridBleConnectionSpec: HybridObject() {
   @Keep
   abstract fun write(serviceUuid: String, characteristicUuid: String, data: ArrayBuffer, withResponse: Boolean, timeoutMs: Double): Promise<Unit>
   
+  @DoNotStrip
+  @Keep
+  abstract fun read(serviceUuid: String, characteristicUuid: String): Promise<ArrayBuffer>
+  
   abstract fun subscribe(serviceUuid: String, characteristicUuid: String, onData: (data: ArrayBuffer) -> Unit): Promise<Unit>
   
   @DoNotStrip

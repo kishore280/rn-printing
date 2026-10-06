@@ -121,6 +121,12 @@ export interface BluetoothLETransportOptions extends BleSelectionOptions {
   subscribe?: boolean | undefined;
 }
 
+/** One row of the GATT table, with the value when the characteristic can be read. */
+export interface BleGattReading extends BleGattCharacteristic {
+  value?: Uint8Array;
+  error?: { code: string; message: string };
+}
+
 /** What one `write()` did. For tests and logs. */
 export interface BleWriteStats {
   bytes: number;
@@ -600,6 +606,41 @@ export class BluetoothLETransport implements Transport {
 
   read(options: ReadOptions = {}): Promise<Uint8Array> {
     return this.inbox.read(options);
+  }
+
+  /**
+   * Read every characteristic that has the read property, one after the other, like a generic GATT client does
+   * (nRF Connect). One failed read does not stop the others: it shows as `error` on its row. Nothing is written.
+   * It waits for a running write, so it never shares the link with a print job. NOT checked on a printer.
+   */
+  readGatt(): Promise<BleGattReading[]> {
+    const run = this.writeChain.then(() => this.readGattNow());
+    this.writeChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async readGattNow(): Promise<BleGattReading[]> {
+    const link = this.link;
+    if (!link || this.state !== 'connected') throw new TransportError('The printer is not connected', 'E_NOT_CONNECTED');
+    const out: BleGattReading[] = [];
+    for (const c of this.table) {
+      const row: BleGattReading = { ...c };
+      if (c.read) {
+        try {
+          row.value = new Uint8Array(await link.read(c.serviceUuid, c.uuid));
+        } catch (e) {
+          const error = classify(e, 'E_READ');
+          row.error = { code: error.code ?? 'E_READ', message: error.message };
+          // The link is gone: the rest cannot be read either.
+          if (error.code === 'E_DISCONNECTED') {
+            out.push(row);
+            throw error;
+          }
+        }
+      }
+      out.push(row);
+    }
+    return out;
   }
 
   /** Bytes per write on the current link. */

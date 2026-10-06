@@ -120,6 +120,14 @@ namespace margelo::nitro::bplzlabel {
       auto __value = std::move(__result.value());
       return __value;
     }
+    inline std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>> read(const std::string& serviceUuid, const std::string& characteristicUuid) override {
+      auto __result = _swiftPart.read(serviceUuid, characteristicUuid);
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
     inline std::shared_ptr<Promise<void>> subscribe(const std::string& serviceUuid, const std::string& characteristicUuid, const std::function<void(const std::shared_ptr<ArrayBuffer>& /* data */)>& onData) override {
       auto __result = _swiftPart.subscribe(serviceUuid, characteristicUuid, onData);
       if (__result.hasError()) [[unlikely]] {

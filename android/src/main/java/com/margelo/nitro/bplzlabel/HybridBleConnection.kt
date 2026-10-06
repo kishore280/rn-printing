@@ -151,6 +151,21 @@ class HybridBleConnection(
       guard.complete(status)
     }
 
+    // Android 13 and newer call this one.
+    override fun onCharacteristicRead(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+      readValue = value
+      guard.complete(status)
+    }
+
+    // Android 12 and older call this one.
+    @Suppress("DEPRECATION")
+    override fun onCharacteristicRead(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+        readValue = characteristic.value ?: ByteArray(0)
+        guard.complete(status)
+      }
+    }
+
     override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
       guard.complete(status)
     }
@@ -165,6 +180,8 @@ class HybridBleConnection(
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) deliver(characteristic, characteristic.value ?: ByteArray(0))
     }
   }
+
+  @Volatile private var readValue: ByteArray? = null
 
   private fun deliver(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
     val handler = synchronized(subscribers) {
@@ -339,6 +356,26 @@ class HybridBleConnection(
         }
         throw BleError("E_WRITE", "Write failed: $text")
       }
+    }
+  }
+
+  override fun read(serviceUuid: String, characteristicUuid: String): Promise<ArrayBuffer> {
+    return Promise.parallel {
+      val g = gatt ?: throw BleError("E_DISCONNECTED", "The device is not connected")
+      val c = find(g, serviceUuid, characteristicUuid)
+      if (c.properties and BluetoothGattCharacteristic.PROPERTY_READ == 0) {
+        throw BleError("E_NOT_READABLE", "The characteristic cannot be read")
+      }
+      readValue = null
+      val status = runOp("read", OP_TIMEOUT_MS) { g.readCharacteristic(c) }
+      if (status != BluetoothGatt.GATT_SUCCESS) {
+        val text = BleSupport.gattStatusText(status)
+        if (BleSupport.needsPairing(status)) {
+          throw BleError("E_AUTH", "The device needs pairing ($text). Accept the system pairing dialog, then try again.")
+        }
+        throw BleError("E_READ", "Read failed: $text")
+      }
+      ArrayBuffer.copy(readValue ?: ByteArray(0))
     }
   }
 

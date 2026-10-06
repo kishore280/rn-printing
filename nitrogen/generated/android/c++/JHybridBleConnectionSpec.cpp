@@ -136,6 +136,22 @@ namespace margelo::nitro::bplzlabel {
       return __promise;
     }();
   }
+  std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>> JHybridBleConnectionSpec::read(const std::string& serviceUuid, const std::string& characteristicUuid) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<jni::JString> /* serviceUuid */, jni::alias_ref<jni::JString> /* characteristicUuid */)>("read");
+    auto __result = method(_javaPart, jni::make_jstring(serviceUuid), jni::make_jstring(characteristicUuid));
+    return [&]() {
+      auto __promise = Promise<std::shared_ptr<ArrayBuffer>>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<JArrayBuffer::javaobject>(__boxedResult);
+        __promise->resolve(__result->cthis()->getArrayBuffer());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
   std::shared_ptr<Promise<void>> JHybridBleConnectionSpec::subscribe(const std::string& serviceUuid, const std::string& characteristicUuid, const std::function<void(const std::shared_ptr<ArrayBuffer>& /* data */)>& onData) {
     static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<jni::JString> /* serviceUuid */, jni::alias_ref<jni::JString> /* characteristicUuid */, jni::alias_ref<JFunc_void_std__shared_ptr_ArrayBuffer_::javaobject> /* onData */)>("subscribe_cxx");
     auto __result = method(_javaPart, jni::make_jstring(serviceUuid), jni::make_jstring(characteristicUuid), JFunc_void_std__shared_ptr_ArrayBuffer__cxx::fromCpp(onData));

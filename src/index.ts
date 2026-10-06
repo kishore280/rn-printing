@@ -83,6 +83,8 @@ export type {
   BleDeviceConnection,
 } from './transports/bluetoothLE';
 export { describeGatt } from './transports/bleGatt';
+export { characteristicName, decodeValue, hexBytes, serviceName, shortUuid } from './transports/sig';
+export type { BleGattReading } from './transports/bluetoothLE';
 export type { BleGattCharacteristic, BleSelection, BleSelectionOptions, BleSelector, BleWriteMode } from './transports/bleGatt';
 export { TcpTransport } from './transports/tcp';
 export type { TcpTransportOptions, TcpSocketLike } from './transports/tcp';

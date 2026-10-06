@@ -45,6 +45,7 @@ interface FakeLinkOptions {
   requestMtuImpl?: (mtu: number) => Promise<number>;
   discoverImpl?: () => Promise<BleCharacteristic[]>;
   noResponseCallback?: string;
+  readImpl?: (s: string, c: string) => Promise<Uint8Array>;
 }
 
 class FakeLink {
@@ -89,6 +90,10 @@ class FakeLink {
       subscribe: async (s: string, c: string, onData: (d: ArrayBuffer) => void) => {
         self.subscribed.push(`${s}/${c}`);
         self.push = onData;
+      },
+      read: async (s: string, c: string) => {
+        const v = self.opts.readImpl ? await self.opts.readImpl(s, c) : new Uint8Array([1, 2]);
+        return v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength) as ArrayBuffer;
       },
       unsubscribe: async (s: string, c: string) => { self.unsubscribed.push(`${s}/${c}`); },
       disconnect: async () => { self.disconnects++; self.connected = false; },
@@ -1130,5 +1135,41 @@ describe('BluetoothLE.requestEnable (the system "turn on Bluetooth" dialog)', ()
     await expect(BluetoothLE.requestEnable()).rejects.toMatchObject({ code: 'E_PERMISSION', message: 'The BLUETOOTH_CONNECT permission is not granted' });
     fakeNative({ enableError: new Error('[E_BLUETOOTH_OFF] Bluetooth is off, and there is no screen to ask on') });
     await expect(BluetoothLE.requestEnable()).rejects.toMatchObject({ code: 'E_BLUETOOTH_OFF' });
+  });
+});
+
+describe('BluetoothLETransport: readGatt', () => {
+  it('reads each readable characteristic, keeps going after a failed read and writes nothing', async () => {
+    const fake = fakeNative({
+      readImpl: async (_s, c) => {
+        if (c.startsWith('00002a00')) return new TextEncoder().encode('TVS LP 46');
+        throw new Error('[E_AUTH] The device needs pairing');
+      },
+      gatt: [
+        ...serialGatt(),
+        ch('0000180a-0000-1000-8000-00805f9b34fb', '00002a24-0000-1000-8000-00805f9b34fb', { read: true }),
+      ],
+    });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const rows = await t.readGatt();
+    expect(rows).toHaveLength(4);
+    expect(Array.from(rows[0]?.value ?? [])).toEqual(Array.from(new TextEncoder().encode('TVS LP 46')));
+    expect(rows[1]?.value).toBeUndefined(); // not readable: not asked
+    expect(rows[3]?.error?.code).toBe('E_AUTH');
+    expect(fake.links[0]?.writes).toHaveLength(0);
+    await t.disconnect();
+  });
+
+  it('rejects when not connected', async () => {
+    fakeNative();
+    await expect(new BluetoothLETransport('dev-1').readGatt()).rejects.toMatchObject({ code: 'E_NOT_CONNECTED' });
+  });
+
+  it('LabelPrinter.readGatt gives the rows over BLE', async () => {
+    fakeNative();
+    const printer = new LabelPrinter(new BluetoothLETransport('dev-1'));
+    const rows = await printer.readGatt();
+    expect(rows?.some((r) => r.value !== undefined)).toBe(true);
   });
 });

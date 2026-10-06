@@ -20,6 +20,7 @@ public protocol HybridBleConnectionSpec_protocol: HybridObject {
   func discover() throws -> Promise<[BleCharacteristic]>
   func maxWriteLength(withResponse: Bool) throws -> Double
   func write(serviceUuid: String, characteristicUuid: String, data: ArrayBuffer, withResponse: Bool, timeoutMs: Double) throws -> Promise<Void>
+  func read(serviceUuid: String, characteristicUuid: String) throws -> Promise<ArrayBuffer>
   func subscribe(serviceUuid: String, characteristicUuid: String, onData: @escaping (_ data: ArrayBuffer) -> Void) throws -> Promise<Void>
   func unsubscribe(serviceUuid: String, characteristicUuid: String) throws -> Promise<Void>
   func disconnect() throws -> Promise<Void>

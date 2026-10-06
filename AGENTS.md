@@ -44,7 +44,7 @@ Read this file before you change the code. It tells you where things are, how th
 | `src/reconnect.ts` | cockatiel retry policy, transient-error rule, `ReconnectOptions`, `ConnectionEvent`. Used by `LabelPrinter`. |
 | `src/status.ts` | Parsers for `~HS` and `~HQES` replies. |
 | `src/transport.ts` | `Transport` interface. |
-| `src/transports/` | `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLE` scan/connect + `BluetoothLETransport`, Nitro), `bleGatt.ts` (pure GATT selection), `chunk.ts` (pure splitting), `tcp.ts`, `inbox.ts`. |
+| `src/transports/` | `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLE` scan/connect + `BluetoothLETransport`, Nitro; `readGatt()` reads every readable characteristic), `sig.ts` (Bluetooth SIG names and decoders for 16-bit UUIDs only), `bleGatt.ts` (pure GATT selection), `chunk.ts` (pure splitting), `tcp.ts`, `inbox.ts`. |
 | `src/native.ts` | Lazy loading of Nitro objects. `setNativeCodec` / `setClassicBluetooth` for tests. |
 | `src/encoding.ts` | base64, UTF-8, Latin-1 helpers. |
 | `src/errors.ts` | Error classes. |
@@ -142,6 +142,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | Native BLE (TypeScript) | Unit-tested with a fake native layer. |
 | Native BLE (Kotlin) | Compiled with kotlinc against the Android API jar. Not run on a device. |
 | Native BLE (Swift / CoreBluetooth) | NOT compiled, NOT run. No Swift toolchain here. |
+| BLE `read` (GATT inspector) | TypeScript: unit-tested with a fake. Kotlin: compiled only. Swift: NOT compiled. Not run on a device. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` replies | NOT verified on the printer. |

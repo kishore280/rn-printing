@@ -11,6 +11,7 @@ import {
 import { zplSettings } from './zpl';
 import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
 import type { Transport } from './transport';
+import type { BleGattReading, BluetoothLETransport } from './transports/bluetoothLE';
 
 /** Any label builder: ZplLabel, CpclLabel or BplaLabel. */
 export interface Printable {
@@ -196,6 +197,19 @@ export class LabelPrinter {
    */
   ask(command: string, options: StatusOptions = {}): Promise<string | null> {
     return this.query(command, options, (raw) => raw);
+  }
+
+  /**
+   * Read every readable GATT characteristic of a Bluetooth Low Energy link (the table nRF Connect shows). Resolves with null
+   * for a transport that is not BLE (Classic and TCP have no GATT table). Nothing is written to the printer.
+   */
+  readGatt(): Promise<BleGattReading[] | null> {
+    return this.exclusive(() =>
+      this.withLink(async () => {
+        const t = this.transport as Partial<Pick<BluetoothLETransport, 'readGatt'>>;
+        return typeof t.readGatt === 'function' ? t.readGatt() : null;
+      }, true)
+    );
   }
 
   /** Send a query, wait for the reply and parse it. Nothing else is sent in between. */
