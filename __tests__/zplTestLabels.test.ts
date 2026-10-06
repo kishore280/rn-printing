@@ -12,7 +12,7 @@ const blocks = Array.from(doc.matchAll(/### ([^\n]+)\n+```zpl\n([^\n]+)\n```/g))
 
 describe('docs/BPLZ-TEST-LABELS.md', () => {
   it('has the labels', () => {
-    expect(blocks.length).toBe(22);
+    expect(blocks.length).toBe(23);
   });
 
   it.each(blocks)('$title fits one write of 200 bytes', ({ zpl }) => {

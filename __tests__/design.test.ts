@@ -8,7 +8,7 @@ describe('designToZpl', () => {
   it('converts millimetres to dots at 8 dots per mm', () => {
     const z = designToZpl(base([{ kind: 'text', xMm: 5, yMm: 10, text: 'Sweet', heightMm: 4 }]));
     const t = parseZpl(z).labels[0]?.elements[0];
-    expect(t).toMatchObject({ kind: 'text', x: 40, y: 80, height: 32, width: 26, text: 'Sweet' });
+    expect(t).toMatchObject({ kind: 'text', x: 40, y: 80, height: 32, width: 32, text: 'Sweet' });
   });
 
   it('writes the label size and copies', () => {
@@ -26,7 +26,7 @@ describe('designToZpl', () => {
     expect(parseZpl(z).labels[0]?.elements[0]).toMatchObject({ kind: 'box', width: 80, height: 32, thickness: 16 });
   });
 
-  it('uses the standard shape of font 0 when no width is given, and a given width as it is', () => {
+  it('uses equal height and width for font 0 when no width is given, and a given width as it is', () => {
     const els = parseZpl(
       designToZpl(
         base([
@@ -35,8 +35,13 @@ describe('designToZpl', () => {
         ])
       )
     ).labels[0]?.elements;
-    expect(els?.[0]).toMatchObject({ height: 40, width: 32 });
+    expect(els?.[0]).toMatchObject({ height: 40, width: 40 });
     expect(els?.[1]).toMatchObject({ height: 40, width: 40 });
+  });
+
+  it('never writes a character size under 10 dots (the smallest scalable size)', () => {
+    const t = parseZpl(designToZpl(base([{ kind: 'text', xMm: 1, yMm: 1, text: 'tiny', heightMm: 0.5 }]))).labels[0]?.elements[0];
+    expect(t).toMatchObject({ height: 10, width: 10 });
   });
 
   it('writes reverse text with ^FR', () => {
@@ -133,5 +138,18 @@ describe('checkDesign', () => {
   });
   it('warns about rotated text', () => {
     expect(checkDesign(base([{ kind: 'text', xMm: 2, yMm: 2, text: 'x', heightMm: 3, rotation: 90 }]))[0]).toMatchObject({ code: 'ROTATION' });
+  });
+});
+
+describe('more checks from the Zebra guide', () => {
+  it('warns about text under 10 dots high', () => {
+    expect(checkDesign(base([{ kind: 'text', xMm: 2, yMm: 2, text: 'x', heightMm: 1 }]))[0]).toMatchObject({ code: 'TEXT_SMALL' });
+  });
+  it('warns when a bar code is too close to the left edge for its quiet zone', () => {
+    const near = checkDesign(base([{ kind: 'barcode', xMm: 1, yMm: 2, type: 'code128', data: '1', heightMm: 8 }]));
+    expect(near[0]).toMatchObject({ code: 'QUIET_ZONE' });
+    expect(checkDesign(base([{ kind: 'barcode', xMm: 4, yMm: 2, type: 'code128', data: '1', heightMm: 8 }]))).toEqual([]);
+    // Wider bars need more space: 3 dots x 10 = 30 dots = 3.75 mm.
+    expect(checkDesign(base([{ kind: 'barcode', xMm: 3, yMm: 2, type: 'code128', data: '1', heightMm: 8, moduleWidth: 3 }]))[0]).toMatchObject({ code: 'QUIET_ZONE' });
   });
 });

@@ -20,10 +20,7 @@ export interface DesignText {
   text: string;
   /** Character height in mm. */
   heightMm: number;
-  /**
-   * Character width in mm. Default: the font's own shape. Font 0 is 15 high by 12 wide (a ratio of 0.8) in
-   * Zebra's table of font matrices, so its default width is 0.8 of the height. A different width squeezes or stretches the letters.
-   */
+  /** Character width in mm. Default: equal to the height (FONT0_RATIO). A different width squeezes or stretches the letters. */
   widthMm?: number;
   /** Font letter or digit. Default `0` (scalable). */
   font?: string;
@@ -98,14 +95,21 @@ export interface LabelDesign {
 
 export interface DesignIssue {
   severity: 'error' | 'warning';
-  code: 'OUTSIDE' | 'VEG_SIZE' | 'ROTATION';
+  code: 'OUTSIDE' | 'VEG_SIZE' | 'ROTATION' | 'TEXT_SMALL' | 'QUIET_ZONE';
   message: string;
   /** Index of the item in `design.items`. */
   item: number;
 }
 
-/** Width over height of the scalable font 0: its standard matrix is 15 x 12 (Zebra ZPL II guide, "Font Matrices"). */
-export const FONT0_RATIO = 0.8;
+/**
+ * Width over height for scalable font 0. Zebra's guide says: "For scalable fonts, setting the height and width equally
+ * produces characters that appear the most balanced" (p. 898). Its default matrix is 15 high x 12 wide (0.8). Our first product
+ * labels used equal values and printed right on the TVS. Not settled for text sizes: see test label T17.
+ */
+export const FONT0_RATIO = 1;
+
+/** The smallest character height or width for a scalable font: 10 dots (Zebra ZPL II guide, ^A). */
+export const MIN_SCALABLE_DOTS = 10;
 
 /**
  * Minimum size of the veg / non-veg symbol by the area of the principal display panel.
@@ -148,6 +152,7 @@ export function vegSymbolZpl(x: number, y: number, side: number, type: 'veg' | '
 export function checkDesign(design: LabelDesign): DesignIssue[] {
   const issues: DesignIssue[] = [];
   const areaCm2 = (design.widthMm * design.heightMm) / 100;
+  const dpm = design.dotsPerMm ?? 8;
   design.items.forEach((it, item) => {
     if (it.xMm < 0 || it.yMm < 0 || it.xMm >= design.widthMm || it.yMm >= design.heightMm) {
       issues.push({ severity: 'error', code: 'OUTSIDE', message: 'The item starts outside the label', item });
@@ -163,6 +168,26 @@ export function checkDesign(design: LabelDesign): DesignIssue[] {
           severity: 'warning',
           code: 'VEG_SIZE',
           message: `The symbol is smaller than ${min} mm, the FSSAI minimum for this label area`,
+          item,
+        });
+      }
+    }
+    if (it.kind === 'text' && Math.round(it.heightMm * dpm) < MIN_SCALABLE_DOTS) {
+      issues.push({
+        severity: 'warning',
+        code: 'TEXT_SMALL',
+        message: `Text under ${MIN_SCALABLE_DOTS} dots high is made ${MIN_SCALABLE_DOTS} dots: the printer's smallest size`,
+        item,
+      });
+    }
+    if (it.kind === 'barcode') {
+      // A bar code needs clear space each side: about ten narrow bars (Zebra ZPL II guide, "Bar Codes").
+      const need = 10 * (it.moduleWidth ?? 2);
+      if (it.xMm * dpm < need) {
+        issues.push({
+          severity: 'warning',
+          code: 'QUIET_ZONE',
+          message: `A bar code needs about ${need} dots (${(need / dpm).toFixed(1)} mm) of empty space before it`,
           item,
         });
       }
@@ -192,8 +217,9 @@ export function designToLabel(design: LabelDesign): ZplLabel {
     const y = dots(it.yMm);
     switch (it.kind) {
       case 'text': {
-        const height = Math.max(1, dots(it.heightMm));
-        const width = Math.max(1, it.widthMm === undefined ? Math.round(height * FONT0_RATIO) : dots(it.widthMm));
+        // Both sizes are at least 10 dots, the smallest the printer takes (^A).
+        const height = Math.max(MIN_SCALABLE_DOTS, dots(it.heightMm));
+        const width = Math.max(MIN_SCALABLE_DOTS, it.widthMm === undefined ? Math.round(height * FONT0_RATIO) : dots(it.widthMm));
         const rotation = it.rotation === 90 ? 'R' : 'N';
         if (it.reverse) {
           // ZplLabel.text has no reverse option. Same command text, with ^FR before the data.

@@ -191,6 +191,12 @@ describe('validateZpl', () => {
     expect(codes('^XA^FO0,0^GFA,2,2,2,zz^FS^XZ')).toContain('GF_DATA');
   });
 
+  it('flags a ^GFA over the 99999-byte limit and a scalable size under 10 dots', () => {
+    expect(codes('^XA^FO0,0^GFA,100000,100000,108,FF^FS^XZ')).toContain('GF_LIMIT');
+    expect(codes('^XA^FO0,0^A0N,8,8^FDx^FS^XZ')).toContain('TEXT_SIZE');
+    expect(codes('^XA^FO0,0^A0N,10,10^FDx^FS^XZ')).not.toContain('TEXT_SIZE');
+  });
+
   it('never throws on garbage', () => {
     for (const z of ['', '^', '~', '^^^^', '^XA^XA^XZ^XZ', '^FD', '^BQ,,,^FD', '^GFA', '^A', 'abc^FO,,,,']) {
       expect(() => parseZpl(z)).not.toThrow();

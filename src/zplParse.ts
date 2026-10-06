@@ -533,6 +533,10 @@ export function parseZpl(src: string, options: ZplParseOptions = {}): ZplDocumen
         const w = num(p[2]);
         range(t, 'Character height', h, 0, 32000);
         range(t, 'Character width', w, 0, 32000);
+        // Zebra: a scalable font takes 10 to 32000 (0 means the font's own size).
+        for (const [name, v] of [['height', h], ['width', w]] as const) {
+          if (v !== undefined && v > 0 && v < 10) issue('warning', 'TEXT_SIZE', `Character ${name} ${v} is under 10 dots, the smallest scalable size`, t);
+        }
         f.textHeight = h ?? font.h;
         f.textWidth = w ?? h ?? font.w;
         if (f.font === '@') f.font = p[3] ?? '@';
@@ -618,6 +622,10 @@ export function parseZpl(src: string, options: ZplParseOptions = {}): ZplDocumen
         const bpr = num(g[2]);
         const data = g.slice(3).join(',');
         const f = cur(t);
+        if (total !== undefined && total > 99999) {
+          issue('error', 'GF_LIMIT', `^GFA holds at most 99999 bytes, got ${total}. The printer cuts the image without a message.`, t);
+          break;
+        }
         if (!bpr || bpr < 1 || !total || total < 1) {
           issue('error', 'GF_PARAMS', '^GFA needs the byte counts and the bytes per row', t);
           break;

@@ -155,6 +155,13 @@ Expect: a tiny 8 x 8 dot checkerboard (1 mm). Look with a magnifier.
 Expect: a 32 x 32 dot square. The top half is black on the left half and the bottom half is black on the right half.
 This tests the compression with the repeat character `:`.
 
+### T17 font 0 width against height
+
+```zpl
+^XA^PW400^LL240^FO10,10^A0N,30,18^FD0.6 Hamburg 123^FS^FO10,60^A0N,30,24^FD0.8 Hamburg 123^FS^FO10,110^A0N,30,30^FD1.0 Hamburg 123^FS^FO10,160^A0N,30,36^FD1.2 Hamburg 123^FS^XZ
+```
+Expect: four lines of the same height. The width is 0.6, 0.8, 1.0 and 1.2 of the height. Zebra says equal width and height looks "most balanced", and its default shape is 0.8. Look at which line looks right and tell us. The label layout uses this ratio.
+
 ### T13 copies
 
 ```zpl
