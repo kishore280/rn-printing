@@ -19,6 +19,7 @@ so you know how far to trust it.
 | iOS limit | [Apple developer forums](https://developer.apple.com/forums/thread/72148) | Bluetooth Classic (SPP) needs MFi. Public CoreBluetooth is BLE only. |
 | ZPL barcode and `^BQ` parameters | Zebra ZPL II programming guide | Parameter order as documented. |
 | ZPL parser and checker (`src/zplParse.ts`) | Command list and value ranges from the SNBC SDK V2.4.2.1 C API guide and native library (`docs/TEARDOWN.md` 4a); syntax from the Zebra ZPL II guide | Tested against our own builder output and against the reference compressor (round trip). **NOT checked on a printer.** SNBC publishes no BPLZ command manual, so "no issue" does not mean the printer accepts the label. Default font (`^CF` A, 9 x 5) and QR default cell size 1 are from memory of the Zebra guide, not verified. |
+| Font 0 shape (`FONT0_RATIO` in `src/design.ts`) | Zebra ZPL II Programming Guide, "Font Matrices": font 0 default 15 x 12 (height x width), and the `^A` note that an unspecified width comes from the standard matrix | Ratio 0.8. A width that is not 0.8 of the height squeezes or stretches the letters. NOT checked on the SNBC printer. |
 | BPLA text record layout | Datamax DPL record table (rotation, font, width mult, height mult, size, row, column) and the format strings inside SNBC's own library | Same layout. |
 | BPLC (CPCL) | Zebra and Brother CPCL manuals; command strings inside SNBC's library | Same commands. |
 

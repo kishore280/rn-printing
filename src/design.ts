@@ -20,7 +20,10 @@ export interface DesignText {
   text: string;
   /** Character height in mm. */
   heightMm: number;
-  /** Character width in mm. Default: the same as the height. */
+  /**
+   * Character width in mm. Default: the font's own shape. Font 0 is 15 high by 12 wide (a ratio of 0.8) in
+   * Zebra's table of font matrices, so its default width is 0.8 of the height. A different width squeezes or stretches the letters.
+   */
   widthMm?: number;
   /** Font letter or digit. Default `0` (scalable). */
   font?: string;
@@ -100,6 +103,9 @@ export interface DesignIssue {
   /** Index of the item in `design.items`. */
   item: number;
 }
+
+/** Width over height of the scalable font 0: its standard matrix is 15 x 12 (Zebra ZPL II guide, "Font Matrices"). */
+export const FONT0_RATIO = 0.8;
 
 /**
  * Minimum size of the veg / non-veg symbol by the area of the principal display panel.
@@ -187,7 +193,7 @@ export function designToLabel(design: LabelDesign): ZplLabel {
     switch (it.kind) {
       case 'text': {
         const height = Math.max(1, dots(it.heightMm));
-        const width = Math.max(1, dots(it.widthMm ?? it.heightMm));
+        const width = Math.max(1, it.widthMm === undefined ? Math.round(height * FONT0_RATIO) : dots(it.widthMm));
         const rotation = it.rotation === 90 ? 'R' : 'N';
         if (it.reverse) {
           // ZplLabel.text has no reverse option. Same command text, with ^FR before the data.

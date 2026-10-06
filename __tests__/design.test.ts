@@ -8,7 +8,7 @@ describe('designToZpl', () => {
   it('converts millimetres to dots at 8 dots per mm', () => {
     const z = designToZpl(base([{ kind: 'text', xMm: 5, yMm: 10, text: 'Sweet', heightMm: 4 }]));
     const t = parseZpl(z).labels[0]?.elements[0];
-    expect(t).toMatchObject({ kind: 'text', x: 40, y: 80, height: 32, width: 32, text: 'Sweet' });
+    expect(t).toMatchObject({ kind: 'text', x: 40, y: 80, height: 32, width: 26, text: 'Sweet' });
   });
 
   it('writes the label size and copies', () => {
@@ -24,6 +24,19 @@ describe('designToZpl', () => {
   it('fills a filled box', () => {
     const z = designToZpl(base([{ kind: 'box', xMm: 0, yMm: 0, widthMm: 10, heightMm: 4, filled: true }]));
     expect(parseZpl(z).labels[0]?.elements[0]).toMatchObject({ kind: 'box', width: 80, height: 32, thickness: 16 });
+  });
+
+  it('uses the standard shape of font 0 when no width is given, and a given width as it is', () => {
+    const els = parseZpl(
+      designToZpl(
+        base([
+          { kind: 'text', xMm: 1, yMm: 1, text: 'a', heightMm: 5 },
+          { kind: 'text', xMm: 1, yMm: 8, text: 'b', heightMm: 5, widthMm: 5 },
+        ])
+      )
+    ).labels[0]?.elements;
+    expect(els?.[0]).toMatchObject({ height: 40, width: 32 });
+    expect(els?.[1]).toMatchObject({ height: 40, width: 40 });
   });
 
   it('writes reverse text with ^FR', () => {
