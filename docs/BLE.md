@@ -13,7 +13,7 @@ ZplLabel / CpclLabel / BplaLabel  ->  bytes  ->  LabelPrinter  ->  Transport  ->
   Both are called from Nitro objects (`BluetoothLE`, `BleConnection`). There is no third-party BLE library.
 - No MAC address, device name, PIN or UUID is built in. The package finds the GATT table at run time.
 - Bluetooth Classic (SPP) is not changed. BLE does not use the Classic PIN.
-- The older `BleTransport` (with `react-native-ble-plx`) is still exported. New code should use `BluetoothLETransport`.
+- `BluetoothLETransport` is the only BLE transport. The older `BleTransport` and `blePlxClient` (for `react-native-ble-plx`) were removed. There is no dependency on `react-native-ble-plx`.
 
 ## Set up
 
@@ -113,25 +113,42 @@ new BluetoothLETransport(device, { profile });   // explicit options still win o
 
 ### Write type, piece size, flow control
 
-- **Write type.** `writeMode: 'auto'` (default) uses "write with response" when the characteristic has it: the stack confirms each piece.
-  Otherwise it uses "write without response". Set `'withResponse'` or `'withoutResponse'` to force one.
-  Write without response is faster. The printer cannot say when its buffer is full, so the transport waits 10 ms between pieces by default (`chunkDelayMs`).
+- **Write type** (`writeMode`):
+  - `'auto'` (default): "write without response" when the characteristic has it, else "write with response".
+    Write without response is the usual choice for serial-over-BLE printers. It can fit several packets in one connection event, so it is much faster.
+  - `'write'`: "write with response". The stack confirms each piece. Slower (one piece per two connection intervals on iOS). The safest mode.
+  - `'withoutResponse'`: force the fast mode. Connect fails with `E_NO_CHARACTERISTIC` when the characteristic cannot do it.
+  The flag goes to the platform call: Android `WRITE_TYPE_NO_RESPONSE` / `WRITE_TYPE_DEFAULT`, iOS `.withoutResponse` / `.withResponse`.
+  `selection.withResponse` shows what was chosen.
+  Without response, the printer cannot say when its buffer is full. So on top of the stack's own flow control the transport waits `chunkDelayMs` between pieces
+  (default 10 ms; `0` turns it off). If labels come out cut or with garbage, try `writeMode: 'write'`, or raise `chunkDelayMs`.
+  The default of `'auto'` is a design choice that is NOT yet checked on the printer. Compare the modes on the real TVS (see the test plan).
 - **Piece size.** The transport asks the link for its limit before each job: Android = agreed MTU - 3 (at most 512 with response). iOS = `maximumWriteValueLength`.
   On Android the transport asks for MTU 247 after connect (`requestMtu`, `false` skips it). The device may agree to less. The transport uses what was agreed.
   `chunkSize` sets a lower limit. If the link reports nothing, 20 bytes are used (the smallest BLE packet).
-- **Flow control.** One piece at a time. The next piece starts only after the stack accepts the last one:
-  Android waits for `onCharacteristicWrite`. iOS waits for `didWriteValueFor` (with response) or for `canSendWriteWithoutResponse` / `peripheralIsReady` (without response).
-  Two `write()` calls never mix their bytes.
+- **Flow control.** One piece at a time, in three layers. (1) TypeScript sends the next piece only after the last one finished, and two `write()` calls never mix (a queue).
+  (2) Android runs one GATT operation at a time and waits for `onCharacteristicWrite` (Android keeps the link busy until then, also for writes without response;
+  if a phone never calls back, the first probe notices and later pieces rely on Android's "busy" answer). (3) iOS waits for `didWriteValueFor` (with response)
+  or for `canSendWriteWithoutResponse` and `peripheralIsReady(toSendWriteWithoutResponse:)` (without response). No timers or blind loops decide when a piece may go.
+- **Pieces.** `chunkBytes()` splits the job into views of the input. Joined in order they equal the input, byte for byte. This is tested for 0 B to 100 KB at several link limits.
 - **Timeouts.** `writeTimeoutMs` (default 5000) is for one piece. `connectTimeoutMs` (default 10000) is for the connect.
 - **Cancel.** `transport.cancel()` or `write(data, { signal })` stops between two pieces and rejects with `E_CANCELLED`.
-  The printer may hold a part of the job. `LabelPrinter` closes the link after a failed job, so the next job starts clean.
+  The printer may hold a part of the job, so the transport closes the link (as it does after every failed write, timeout or lost link). The next job opens a clean link.
 - **Progress.** `write(data, { onProgress: (sent, total) => ... })`.
 
 Bytes are never changed or turned into text. `Uint8Array` goes to the native side as `ArrayBuffer`.
 
 ### Connection life cycle
 
-`transport.onConnectionState(fn)` gives `connecting`, `connected`, `disconnecting` and `disconnected` (with a `reason` such as `GATT status 8 (connection timeout)`).
+`transport.onConnectionState(fn)` gives the life cycle of the link and of each write:
+
+```
+connecting > connected > writing > connected   (write completed)
+                      \> disconnected           (write failed, timed out, was cancelled, or the link was lost)
+connected > disconnecting > disconnected         (you called disconnect)
+```
+
+`disconnected` has a `reason` (for example `GATT status 8 (connection timeout)`) and, when an error caused it, the `error` with its code. Each failure ends the link, so a failed job is never followed by the next job on the same link.
 If the printer goes out of range or switches off, the state changes at once and a running `write()` rejects with `E_DISCONNECTED`
 (the message says how many bytes were sent). The next `LabelPrinter` job connects again. There is no background reconnect loop. `transport.reconnect()` does one reconnect when you call it.
 `BluetoothLE.getState()` and `BluetoothLE.onStateChange()` show Bluetooth on, off, `unauthorized`, `unsupported`.
@@ -165,7 +182,7 @@ The Classic PIN of a printer does not apply to BLE.
 | `E_PERMISSION` on iOS | Settings > the app > Bluetooth. Is `NSBluetoothAlwaysUsageDescription` in Info.plist? |
 | `E_CONNECT` with `GATT status 133` | A generic Android error. Switch Bluetooth off and on, move closer, make sure no other app holds the printer. A new attempt often works. |
 | `E_NO_CHARACTERISTIC` | Read the table in the message. Pass `serviceUuid` and `writeCharacteristicUuid`, or `select`. |
-| Labels print cut, or garbage after a big image | Use `writeMode: 'withResponse'`, or a larger `chunkDelayMs` (try 20), or a smaller `chunkSize`. |
+| Labels print cut, or garbage after a big image | Use `writeMode: 'write'`, or a larger `chunkDelayMs` (try 20), or a smaller `chunkSize`. |
 | Slow big jobs | Use `writeMode: 'withoutResponse'` with a small `chunkDelayMs`, and keep the default MTU request. |
 | iOS cannot find the device by the id from another phone | The iOS id is per phone. Scan again. |
 | Printer prints once, then fails on the next job | The printer may hold one central at a time. `disconnect()` after the job, or keep one `LabelPrinter` for the whole session. |
@@ -182,14 +199,17 @@ that accepts both write types. The package code does not contain these UUIDs and
 
 Run it on one Android phone and one iPhone. Write down the result.
 
+0. The example `example/BleHardwareTest.tsx` runs this plan: scan, connect (it logs the GATT table, the chosen characteristics and the piece size), then buttons A to G, with a write-mode switch and a delay box.
+   The payloads are in `example/hardwarePayloads.ts` (BPLZ only, no BLE inside): A `HELLO FROM BLE`, B text and positions, C QR, D Code 128, E image/logo, F large image (a picture and a noise label of 100 KB or more), G ten labels in a row.
+   They follow the media size and the dots per mm you pass in (`labelWidthMm`, `labelLengthMm`, `dotsPerMm`). The defaults are 50 x 30 mm and 8 dots/mm (203 dpi). The large test defaults to 100 x 100 mm.
 1. Install the example app or your own app. Turn the printer on. Close other apps that hold the printer.
 2. `BluetoothLE.requestPermissions()` returns true.
 3. `BluetoothLE.scan({ timeoutMs: 8000 })` shows the printer with a name and an RSSI.
 4. `BluetoothLE.inspect(device)` prints a GATT table with a writable characteristic.
 5. `new BluetoothLETransport(device)`: after `connect()`, check `transport.selection` (write and notify characteristic, `reason`, `alternatives`).
 6. Print a small label (`ZplLabel` with text). It prints.
-7. Print a big label: a 50 mm x 30 mm image from `ditherRgba` + `compressBitmap` (more than 20 KB of ZPL), then a label of the full width (108 mm). It prints without gaps or garbage.
-   Repeat with `writeMode: 'withResponse'` and `'withoutResponse'`. Note the time of each.
+7. Run E, then F (picture, then noise), then G. They print without gaps, shifted rows or garbage.
+   Repeat with `writeMode: 'write'` and `'withoutResponse'`, and with `chunkDelayMs` 0, 10 and 30. Note the time and the bytes per second of each. Write down the fastest setting that prints correctly.
 8. `await printer.getStatus()` returns a status (BPLZ), or null when the printer does not answer. Note which.
 9. Switch the printer off in the middle of a big job: the job rejects with `E_DISCONNECTED`, the transport reports `disconnected`. Switch it on and print again: it prints.
 10. Turn Bluetooth off in the phone: the next print rejects with `E_BLUETOOTH_OFF` and is not retried.

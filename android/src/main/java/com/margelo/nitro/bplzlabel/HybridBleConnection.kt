@@ -45,6 +45,16 @@ class HybridBleConnection(
   @Volatile private var pending: CompletableFuture<Int>? = null
   @Volatile private var requestedClose = false
 
+  /**
+   * Does this phone call onCharacteristicWrite for a write without response? Engineers who read the
+   * Android source report that it does: BluetoothGatt keeps its busy flag set for every write, also
+   * without response, until onCharacteristicWrite. So the normal path waits for the callback.
+   * Phones differ and we did not check one, so the first such write is a probe: if no callback comes
+   * in PROBE_MS, later pieces are done when Android accepts them. Android's "busy" answer (a refused
+   * write, tried again by runOp) is then the flow control. This only protects against a hang.
+   */
+  @Volatile private var noResponseCallback: Boolean? = null
+
   private var connectPromise: Promise<HybridBleConnectionSpec>? = null
   private val connectSettled = AtomicBoolean(false)
   private val disconnectNotified = AtomicBoolean(false)
@@ -113,7 +123,12 @@ class HybridBleConnection(
         if (!wasConnected) {
           settleConnect(BleError("E_CONNECT", "Cannot connect to ${device.address}: ${BleSupport.gattStatusText(status)}"))
         }
-        notifyDisconnect(if (requestedClose) "requested" else BleSupport.gattStatusText(status))
+        val reason = when {
+          requestedClose -> "requested"
+          status == BluetoothGatt.GATT_SUCCESS -> "the device closed the link"
+          else -> BleSupport.gattStatusText(status)
+        }
+        notifyDisconnect(reason)
       }
     }
 
@@ -169,10 +184,17 @@ class HybridBleConnection(
 
   /**
    * Start an operation with `start` (returns false when Android refuses) and wait for its callback.
-   * Returns the GATT status. A refusal is tried again for up to `timeoutMs`, because Android refuses
-   * a new write while the last write without response is still in its queue.
+   * Returns the GATT status. A refusal is tried again for up to `timeoutMs` when `retryRefusal` is true,
+   * because Android refuses a new write while the last write without response is still in its queue.
+   * An MTU request is not tried again: Android 14 asks for the MTU by itself and refuses a second request.
    */
-  private fun runOp(what: String, timeoutMs: Long, start: () -> Boolean): Int {
+  private fun runOp(
+    what: String,
+    timeoutMs: Long,
+    retryRefusal: Boolean = true,
+    waitForCallback: Boolean = true,
+    start: () -> Boolean,
+  ): Int {
     synchronized(opLock) {
       val deadline = System.currentTimeMillis() + timeoutMs
       while (true) {
@@ -181,6 +203,7 @@ class HybridBleConnection(
         pending = future
         try {
           if (start()) {
+            if (!waitForCallback) return BluetoothGatt.GATT_SUCCESS
             val left = deadline - System.currentTimeMillis()
             val status = try {
               future.get(maxOf(left, 1L), TimeUnit.MILLISECONDS)
@@ -193,7 +216,7 @@ class HybridBleConnection(
         } finally {
           pending = null
         }
-        if (System.currentTimeMillis() >= deadline) {
+        if (!retryRefusal || System.currentTimeMillis() >= deadline) {
           throw BleError("E_WRITE", "Android refused to start $what (busy or the link is closing)")
         }
         Thread.sleep(RETRY_MS)
@@ -207,7 +230,7 @@ class HybridBleConnection(
     val wanted = mtu.toInt().coerceIn(DEFAULT_MTU, MAX_MTU)
     return Promise.parallel {
       val g = gatt ?: throw BleError("E_DISCONNECTED", "The device is not connected")
-      runOp("MTU request", OP_TIMEOUT_MS) { g.requestMtu(wanted) }
+      runOp("MTU request", OP_TIMEOUT_MS, retryRefusal = false) { g.requestMtu(wanted) }
       mtuValue.toDouble()
     }
   }
@@ -263,13 +286,27 @@ class HybridBleConnection(
       val g = gatt ?: throw BleError("E_DISCONNECTED", "The device is not connected")
       val c = find(g, serviceUuid, characteristicUuid)
       val type = if (withResponse) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-      val status = runOp("write", limit) {
+      val start = {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
           g.writeCharacteristic(c, bytes, type) == 0 // BluetoothStatusCodes.SUCCESS
         } else {
           c.writeType = type
           c.value = bytes
           g.writeCharacteristic(c)
+        }
+      }
+      val status = if (withResponse || noResponseCallback == true) {
+        runOp("write", limit, start = start)
+      } else if (noResponseCallback == false) {
+        runOp("write", limit, waitForCallback = false, start = start)
+      } else {
+        // First write without response: find out whether Android calls back.
+        try {
+          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, start = start).also { noResponseCallback = true }
+        } catch (e: BleError) {
+          if (e.code != "E_TIMEOUT") throw e
+          noResponseCallback = false // accepted by Android, no callback: this phone does not call back
+          BluetoothGatt.GATT_SUCCESS
         }
       }
       if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -370,6 +407,7 @@ class HybridBleConnection(
     private const val DISCOVERY_TIMEOUT_MS = 15000L
     private const val CLOSE_WAIT_MS = 2000L
     private const val RETRY_MS = 5L
+    private const val PROBE_MS = 1000L
     private const val DISCONNECTED = -1
     private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
   }

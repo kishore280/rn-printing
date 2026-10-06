@@ -23,7 +23,7 @@ function native(): ClassicBluetooth {
   const mod = Platform.OS === 'android' ? getClassicBluetooth() : null;
   if (!mod) {
     throw new UnsupportedPlatformError(
-      'Bluetooth Classic printing works on Android only. On iOS use BleTransport (BLE printers) or TcpTransport (Ethernet or WiFi printers).'
+      'Bluetooth Classic printing works on Android only. On iOS use BluetoothLETransport (BLE printers) or TcpTransport (Ethernet or WiFi printers).'
     );
   }
   return mod;

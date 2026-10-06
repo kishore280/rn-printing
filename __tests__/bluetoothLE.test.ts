@@ -272,23 +272,42 @@ describe('selectCharacteristics', () => {
     expect(normalizeUuid('1111111100000000000000000000ABCD')).toBe('11111111-0000-0000-0000-00000000abcd');
   });
 
-  it('finds the serial pair with no UUID given, and prefers a confirmed write', () => {
+  it('finds the serial pair with no UUID given, and in auto mode uses write without response', () => {
     const s = selectCharacteristics(serialGatt());
     expect(s.write.uuid).toBe(SERIAL_TX);
     expect(s.notify?.uuid).toBe(SERIAL_RX);
-    expect(s.withResponse).toBe(true); // the characteristic has both kinds, 'auto' takes the confirmed one
+    expect(s.withResponse).toBe(false); // the characteristic has both kinds, 'auto' takes the fast one
     expect(s.alternatives).toEqual([]);
   });
 
-  it('uses write without response when that is all the characteristic offers', () => {
-    const gatt = [ch(SERIAL_SVC, SERIAL_TX, { writeWithoutResponse: true })];
-    expect(selectCharacteristics(gatt).withResponse).toBe(false);
+  it.each([
+    ['write only', { write: true }, 'auto', true],
+    ['write only', { write: true }, 'write', true],
+    ['without response only', { writeWithoutResponse: true }, 'auto', false],
+    ['without response only', { writeWithoutResponse: true }, 'withoutResponse', false],
+    ['both', { write: true, writeWithoutResponse: true }, 'auto', false],
+    ['both', { write: true, writeWithoutResponse: true }, 'write', true],
+    ['both', { write: true, writeWithoutResponse: true }, 'withoutResponse', false],
+  ] as const)('characteristic with %s, mode %s -> withResponse=%s', (_name, props, mode, expected) => {
+    const gatt = [ch(SERIAL_SVC, SERIAL_TX, { ...props })];
+    expect(selectCharacteristics(gatt, { writeMode: mode }).withResponse).toBe(expected);
+  });
+
+  it('with a forced mode, skips a characteristic that lacks it and takes one that has it', () => {
+    const gatt = [
+      ch(SERIAL_SVC, 'only-write', { write: true }),
+      ch(SERIAL_SVC, 'only-fast', { writeWithoutResponse: true }),
+    ];
+    expect(selectCharacteristics(gatt, { writeMode: 'write' }).write.uuid).toBe('only-write');
+    expect(selectCharacteristics(gatt, { writeMode: 'withoutResponse' }).write.uuid).toBe('only-fast');
   });
 
   it('honors writeMode and fails when the characteristic cannot do it', () => {
     expect(selectCharacteristics(serialGatt(), { writeMode: 'withoutResponse' }).withResponse).toBe(false);
     const only = [ch(SERIAL_SVC, SERIAL_TX, { write: true })];
     expect(() => selectCharacteristics(only, { writeMode: 'withoutResponse' })).toThrow(/No writable characteristic matches/);
+    const fast = [ch(SERIAL_SVC, SERIAL_TX, { writeWithoutResponse: true })];
+    expect(() => selectCharacteristics(fast, { writeMode: 'write' })).toThrow(/No writable characteristic matches/);
   });
 
   it('skips Generic Access and Device Information, which are not printer data', () => {
@@ -506,7 +525,7 @@ describe('BluetoothLETransport: write', () => {
     const sent = fake.links[0]?.writes ?? [];
     expect(sent.map((w) => w.bytes.length)).toEqual([182, 182, 182, 182, 182, 90]);
     expect(sent.flatMap((w) => w.bytes)).toEqual(Array.from(data));
-    expect(sent.every((w) => w.s === SERIAL_SVC && w.c === SERIAL_TX && w.withResponse)).toBe(true);
+    expect(sent.every((w) => w.s === SERIAL_SVC && w.c === SERIAL_TX && !w.withResponse)).toBe(true);
   });
 
   it('sends a 50 KB job with nothing lost and never two writes at once', async () => {
@@ -563,7 +582,7 @@ describe('BluetoothLETransport: write', () => {
   it('waits between pieces when chunkDelayMs is set, and by default only for writes without response', async () => {
     const stamps: number[] = [];
     fakeNative({ mtu: 23, writeImpl: async () => { stamps.push(Date.now()); } });
-    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 25 });
+    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 25, writeMode: 'write' });
     await t.connect();
     await t.write(bytes(60));
     expect(stamps).toHaveLength(3);
@@ -571,7 +590,7 @@ describe('BluetoothLETransport: write', () => {
 
     const stamps2: number[] = [];
     fakeNative({ mtu: 23, writeImpl: async () => { stamps2.push(Date.now()); } });
-    const u = new BluetoothLETransport('dev-1', { writeMode: 'withoutResponse' });
+    const u = new BluetoothLETransport('dev-1'); // auto = without response: 10 ms default
     await u.connect();
     await u.write(bytes(60));
     expect((stamps2[2] ?? 0) - (stamps2[0] ?? 0)).toBeGreaterThanOrEqual(15); // 2 x 10 ms default
@@ -644,7 +663,10 @@ describe('BluetoothLETransport: write', () => {
     const job = t.write(bytes(200), { onProgress: (sent) => { if (sent >= 40) t.cancel(); } });
     await expect(job).rejects.toMatchObject({ code: 'E_CANCELLED' });
     expect((fake.links[0]?.writes.length ?? 0)).toBeLessThan(10);
-    // The next write starts clean.
+    // A cancel closes the link: the printer may hold half a job. The next write needs a new link.
+    expect(await t.isConnected()).toBe(false);
+    await expect(t.write(bytes(5))).rejects.toMatchObject({ code: 'E_NOT_CONNECTED' });
+    await t.connect();
     await t.write(bytes(5));
   });
 
@@ -760,5 +782,244 @@ describe('LabelPrinter over Bluetooth Low Energy', () => {
     });
     await printer.print('^XA^XZ');
     expect(calls).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Review round: chunking, write modes, queue, life cycle
+// ---------------------------------------------------------------------------------------
+
+import { chunkBytes } from '../src/transports/chunk';
+
+const concat = (parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+const SIZES = [0, 1, 19, 20, 21, 100, 512, 513, 1024, 10 * 1024, 100 * 1024 + 7];
+
+describe('chunkBytes (pure)', () => {
+  it.each(SIZES.flatMap((n) => [20, 182, 244, 512].map((c) => [n, c] as const)))(
+    '%i bytes in pieces of at most %i: joined = original, none too big, none empty',
+    (n, size) => {
+      const data = bytes(n, 3);
+      const pieces = chunkBytes(data, size);
+      expect(concat(pieces)).toEqual(data);
+      expect(pieces).toHaveLength(Math.ceil(n / size));
+      expect(pieces.every((p) => p.length >= 1 && p.length <= size)).toBe(true);
+      // all pieces but the last are full
+      expect(pieces.slice(0, -1).every((p) => p.length === size)).toBe(true);
+    }
+  );
+
+  it('does not copy: pieces are views of the input', () => {
+    const data = bytes(50);
+    const pieces = chunkBytes(data, 20);
+    expect(pieces[0]?.buffer).toBe(data.buffer);
+    expect(pieces[1]?.byteOffset).toBe(20);
+  });
+
+  it('works on a view into a bigger buffer', () => {
+    const big = bytes(100);
+    const view = big.subarray(10, 55);
+    expect(concat(chunkBytes(view, 20))).toEqual(Uint8Array.from(view));
+  });
+
+  it.each([0, -1, 1.5, NaN])('rejects the chunk size %p', (size) => {
+    expect(() => chunkBytes(bytes(5), size)).toThrow(RangeError);
+  });
+});
+
+describe('BluetoothLETransport: byte stream is exact for every size, at every link limit', () => {
+  // ATT payload = MTU - 3. 23 -> 20, 185 -> 182, 247 -> 244, 517 -> 514 (a write with response is capped at 512 by the stack).
+  it.each(
+    SIZES.filter((n) => n <= 10 * 1024).flatMap((n) => [23, 185, 247].map((mtu) => [n, mtu] as const))
+  )('%i bytes at MTU %i', async (n, mtu) => {
+    const fake = fakeNative({ mtu });
+    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 0 });
+    await t.connect();
+    const data = bytes(n, 11);
+    await t.write(data);
+    const sent = fake.links[0]?.writes ?? [];
+    expect(Uint8Array.from(sent.flatMap((w) => w.bytes))).toEqual(data);
+    expect(sent.every((w) => w.bytes.length >= 1 && w.bytes.length <= mtu - 3)).toBe(true);
+    expect(sent).toHaveLength(Math.ceil(n / (mtu - 3)));
+  });
+
+  it('sends 100 KB + 7 bytes with nothing lost, doubled or reordered (write without response)', async () => {
+    const fake = fakeNative({ mtu: 247 });
+    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 0, writeMode: 'withoutResponse' });
+    await t.connect();
+    const data = bytes(100 * 1024 + 7, 5);
+    await t.write(data);
+    const sent = fake.links[0]?.writes ?? [];
+    expect(Uint8Array.from(sent.flatMap((w) => w.bytes))).toEqual(data);
+    expect(sent.every((w) => !w.withResponse)).toBe(true);
+    expect(fake.links[0]?.maxInFlight).toBe(1);
+  });
+
+  it('sends 100 KB + 7 bytes with write with response too', async () => {
+    const fake = fakeNative({ mtu: 517, maxWrite: (r) => (r ? 512 : 514) });
+    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 0, writeMode: 'write' });
+    await t.connect();
+    const data = bytes(100 * 1024 + 7, 9);
+    await t.write(data);
+    const sent = fake.links[0]?.writes ?? [];
+    expect(Uint8Array.from(sent.flatMap((w) => w.bytes))).toEqual(data);
+    expect(sent.every((w) => w.withResponse && w.bytes.length <= 512)).toBe(true);
+  });
+
+  it('uses the limit for the chosen write type (with response is capped at 512, without is not)', async () => {
+    const fake = fakeNative({ mtu: 517, maxWrite: (r) => (r ? 512 : 514) });
+    const a = new BluetoothLETransport('dev-1', { writeMode: 'write' });
+    await a.connect();
+    expect(a.payloadSize).toBe(512);
+    const b = new BluetoothLETransport('dev-1', { writeMode: 'withoutResponse' });
+    await b.connect();
+    expect(b.payloadSize).toBe(514);
+    void fake;
+  });
+});
+
+describe('BluetoothLETransport: write mode reaches the native write call', () => {
+  it.each([
+    ['auto', false],
+    ['write', true],
+    ['withoutResponse', false],
+  ] as const)('mode %s on a characteristic that offers both -> withResponse=%s', async (mode, expected) => {
+    const fake = fakeNative({ mtu: 100 });
+    const t = new BluetoothLETransport('dev-1', { writeMode: mode, chunkDelayMs: 0 });
+    await t.connect();
+    await t.write(bytes(250));
+    const writes = fake.links[0]?.writes ?? [];
+    expect(writes.length).toBeGreaterThan(1);
+    expect(writes.every((w) => w.withResponse === expected)).toBe(true);
+  });
+
+  it('auto falls back to write with response when that is all the characteristic offers', async () => {
+    const fake = fakeNative({ gatt: [ch(SERIAL_SVC, SERIAL_TX, { write: true })] });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await t.write(bytes(30));
+    expect(fake.links[0]?.writes.every((w) => w.withResponse)).toBe(true);
+  });
+
+  it('fails at connect when the forced mode does not exist', async () => {
+    fakeNative({ gatt: [ch(SERIAL_SVC, SERIAL_TX, { write: true })] });
+    await expect(new BluetoothLETransport('dev-1', { writeMode: 'withoutResponse' }).connect()).rejects.toMatchObject({
+      code: 'E_NO_CHARACTERISTIC',
+    });
+  });
+});
+
+describe('BluetoothLETransport: one write at a time', () => {
+  it('never starts a second native write before the first ends, even for writes without response', async () => {
+    const order: string[] = [];
+    const fake = fakeNative({
+      mtu: 23,
+      writeImpl: async (_i, b) => { order.push(`w${b[0]}`); },
+    });
+    const t = new BluetoothLETransport('dev-1', { writeMode: 'withoutResponse', chunkDelayMs: 0 });
+    await t.connect();
+    const jobs = [1, 2, 3].map((n) => t.write(new Uint8Array(60).fill(n)));
+    await Promise.all(jobs);
+    expect(fake.links[0]?.maxInFlight).toBe(1);
+    // job 1 (3 pieces), then job 2, then job 3, in order
+    expect(order).toEqual(['w1', 'w1', 'w1', 'w2', 'w2', 'w2', 'w3', 'w3', 'w3']);
+  });
+
+  it('holds 5000 pieces back and releases them one by one (no burst)', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1', { writeMode: 'withoutResponse', chunkDelayMs: 0 });
+    await t.connect();
+    await t.write(bytes(20 * 3000));
+    expect(fake.links[0]?.writes).toHaveLength(3000);
+    expect(fake.links[0]?.maxInFlight).toBe(1);
+  }, 20000);
+});
+
+describe('BluetoothLETransport: life cycle of a write', () => {
+  const track = (t: BluetoothLETransport) => {
+    const events: Array<{ state: string; reason?: string | undefined; code?: string | undefined }> = [];
+    t.onConnectionState((e) => events.push({ state: e.state, reason: e.reason, code: e.error?.code }));
+    return events;
+  };
+
+  it('goes connected > writing > connected when a write completes', async () => {
+    fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const events = track(t);
+    await t.write(bytes(10));
+    expect(events.map((e) => e.state)).toEqual(['writing', 'connected']);
+    expect(await t.isConnected()).toBe(true);
+  });
+
+  it('goes writing > disconnected with the error when a piece fails, and closes the link', async () => {
+    const fake = fakeNative({ mtu: 23, writeImpl: async (i) => { if (i === 1) throw new Error('[E_WRITE] Write failed: GATT status 133'); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const events = track(t);
+    await expect(t.write(bytes(100))).rejects.toMatchObject({ code: 'E_WRITE' });
+    expect(events.map((e) => e.state)).toEqual(['writing', 'disconnected']);
+    expect(events[1]?.code).toBe('E_WRITE');
+    expect(fake.links[0]?.disconnects).toBe(1);
+    expect(await t.isConnected()).toBe(false);
+  });
+
+  it('does not send a queued job after a failed job (no half job followed by a new one)', async () => {
+    const fake = fakeNative({ mtu: 23, writeImpl: async (i) => { if (i === 1) throw new Error('[E_WRITE] boom'); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const first = t.write(new Uint8Array(100).fill(1));
+    const second = t.write(new Uint8Array(100).fill(2));
+    await expect(first).rejects.toMatchObject({ code: 'E_WRITE' });
+    await expect(second).rejects.toMatchObject({ code: 'E_NOT_CONNECTED' });
+    expect((fake.links[0]?.writes ?? []).every((w) => w.bytes.every((b) => b === 1))).toBe(true);
+  });
+
+  it('closes the link on a timeout, so a late native write cannot mix with the next job', async () => {
+    const fake = fakeNative({ writeImpl: () => new Promise<void>(() => undefined) });
+    const t = new BluetoothLETransport('dev-1', { writeTimeoutMs: 20 });
+    await t.connect();
+    await expect(t.write(bytes(5))).rejects.toMatchObject({ code: 'E_TIMEOUT' });
+    expect(fake.links[0]?.disconnects).toBe(1);
+    expect(await t.isConnected()).toBe(false);
+  });
+
+  it('a link lost during a write is reported once, with the native reason', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const events = track(t);
+    const link = fake.links[0] as FakeLink;
+    await expect(t.write(bytes(200), { onProgress: (s) => { if (s === 40) link.lost('the device closed the link'); } })).rejects.toMatchObject({
+      code: 'E_DISCONNECTED',
+    });
+    expect(events.filter((e) => e.state === 'disconnected')).toEqual([{ state: 'disconnected', reason: 'the device closed the link', code: undefined }]);
+  });
+
+  it('a failed connect ends in disconnected with the error', async () => {
+    fakeNative({ connectError: new Error('[E_BLUETOOTH_OFF] Bluetooth is off') });
+    const t = new BluetoothLETransport('dev-1');
+    const events = track(t);
+    await expect(t.connect()).rejects.toMatchObject({ code: 'E_BLUETOOTH_OFF' });
+    expect(events.map((e) => [e.state, e.code])).toEqual([['connecting', undefined], ['disconnected', 'E_BLUETOOTH_OFF']]);
+  });
+
+  it('printer disappears between jobs: the next print connects once, and a permanent failure stops after maxAttempts', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    const printer = new LabelPrinter(t, { reconnect: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 2, jitter: false } });
+    await printer.print('^XA^XZ');
+    (fake.links[0] as FakeLink).lost('out of range');
+    // From now on the printer does not answer.
+    const mod = (await import('../src/native')).getBluetoothLE() as NativeBluetoothLE;
+    let tries = 0;
+    (mod as unknown as { connect: unknown }).connect = async () => { tries++; throw new Error('[E_TIMEOUT] No answer after 10000 ms'); };
+    await expect(printer.print('^XA^XZ')).rejects.toMatchObject({ code: 'E_TIMEOUT' });
+    expect(tries).toBe(2); // not forever
   });
 });

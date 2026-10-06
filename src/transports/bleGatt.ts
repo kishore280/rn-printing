@@ -4,7 +4,13 @@ import type { BleCharacteristic } from '../specs/BleCharacteristic';
 /** One GATT characteristic with its properties. Same shape as the native object. */
 export type BleGattCharacteristic = BleCharacteristic;
 
-export type BleWriteMode = 'auto' | 'withResponse' | 'withoutResponse';
+/**
+ * Which kind of GATT write to use.
+ * - `'write'`: write with response. The stack confirms each piece. Slower, safest.
+ * - `'withoutResponse'`: write without response. Faster. The transport paces the pieces.
+ * - `'auto'` (default): write without response when the characteristic has it, else write with response.
+ */
+export type BleWriteMode = 'auto' | 'write' | 'withoutResponse';
 
 /** What the transport uses to send and to listen. */
 export interface BleSelection {
@@ -32,7 +38,7 @@ export interface BleSelectionOptions {
   notifyCharacteristicUuid?: string | undefined;
   /** Your own rule. It runs instead of the built-in rule. */
   select?: BleSelector | undefined;
-  /** Default 'auto'. */
+  /** Default 'auto': write without response when the characteristic has it. */
   writeMode?: BleWriteMode | undefined;
   /** Throw when two or more writable characteristics fit equally well. Default false. */
   strictSelection?: boolean | undefined;
@@ -88,7 +94,7 @@ function noMatch(why: string, gatt: readonly BleGattCharacteristic[]): Transport
 }
 
 function resolveWriteType(c: BleGattCharacteristic, mode: BleWriteMode, gatt: readonly BleGattCharacteristic[]): boolean {
-  if (mode === 'withResponse') {
+  if (mode === 'write') {
     if (!c.write) throw noMatch(`Characteristic ${c.uuid} does not support write with response.`, gatt);
     return true;
   }
@@ -96,8 +102,9 @@ function resolveWriteType(c: BleGattCharacteristic, mode: BleWriteMode, gatt: re
     if (!c.writeWithoutResponse) throw noMatch(`Characteristic ${c.uuid} does not support write without response.`, gatt);
     return false;
   }
-  // auto: a confirmed write is slower but each piece is acknowledged. Use it when the characteristic has it.
-  return c.write;
+  // auto: serial-over-BLE printers take write without response, and it is much faster than a confirmed write.
+  // Pieces are paced and wait for the stack (see BluetoothLETransport). Use `writeMode: 'write'` if labels come out cut.
+  return !c.writeWithoutResponse;
 }
 
 /**
@@ -131,7 +138,7 @@ export function selectCharacteristics(gatt: readonly BleGattCharacteristic[], op
   if (writeCharacteristicUuid) candidates = candidates.filter((c) => sameUuid(c.uuid, writeCharacteristicUuid));
   const explicit = !!(serviceUuid || writeCharacteristicUuid);
   if (!explicit) candidates = candidates.filter((c) => !SKIPPED_SERVICES.includes(normalizeUuid(c.serviceUuid)));
-  if (mode === 'withResponse') candidates = candidates.filter((c) => c.write);
+  if (mode === 'write') candidates = candidates.filter((c) => c.write);
   if (mode === 'withoutResponse') candidates = candidates.filter((c) => c.writeWithoutResponse);
   if (candidates.length === 0) throw noMatch('No writable characteristic matches.', gatt);
 

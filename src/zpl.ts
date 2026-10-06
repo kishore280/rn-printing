@@ -200,6 +200,11 @@ export class ZplLabel {
    * ZPL ASCII-compressed hex. Make it once, then print the label as often as you like.
    */
   image(x: number, y: number, bitmap: Bitmap1bpp, compressed: Uint8Array): this {
+    int('bitmap.height', bitmap.height, 1);
+    int('bitmap.bytesPerRow', bitmap.bytesPerRow, 1);
+    if (bitmap.bytesPerRow * 8 < bitmap.width) {
+      throw new RangeError(`bitmap.bytesPerRow (${bitmap.bytesPerRow}) is too small for width ${bitmap.width}`);
+    }
     const total = bitmap.bytesPerRow * bitmap.height;
     this.parts.push(
       `^FO${int('x', x)},${int('y', y)}^GFA,${total},${total},${bitmap.bytesPerRow},`,

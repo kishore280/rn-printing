@@ -41,7 +41,6 @@ The TVS LP 46 Dlite has a BLE module. The BLE code does not need its UUIDs: it r
 
 ```sh
 npm install react-native-bplz-label-printer react-native-nitro-modules
-npm install react-native-ble-plx        # only for the older BleTransport. BluetoothLETransport does not need it
 npm install react-native-tcp-socket     # only for TCP
 cd ios && pod install
 ```
@@ -128,11 +127,7 @@ await lp.print(label);
 
 Scan, GATT discovery, write type, piece size, flow control, errors, troubleshooting and a manual test plan: [docs/BLE.md](docs/BLE.md).
 
-The older `BleTransport` with `react-native-ble-plx` still works:
-
-```ts
-const transport = new BleTransport({ deviceId, client: blePlxClient(new BleManager(), { requestMtu: 185 }) });
-```
+The older `BleTransport` and `blePlxClient` (`react-native-ble-plx`) were removed. `BluetoothLETransport` replaces them and needs no extra BLE package.
 
 ### TCP
 

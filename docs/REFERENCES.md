@@ -16,7 +16,6 @@ so you know how far to trust it.
 | Grey weights 77/150/29 (÷256) | ITU-R BT.601 luma (0.299, 0.587, 0.114) | Same weights, in integers. |
 | Base64 | RFC 4648, Node `Buffer` | Identical for 0–300 byte inputs and for 100 KB. |
 | `ArrayBuffer`, Promise, HybridObject use | [Nitro docs](https://nitro.margelo.com/docs/types/array-buffers), Margelo `build-nitro-modules` skill, official `nitrogen init` scaffold | Build files come from the scaffold. Specs pass `nitrogen`. |
-| BLE adapter | `react-native-ble-plx` 3.5.1 type definitions | Type-checks against the real types. |
 | iOS limit | [Apple developer forums](https://developer.apple.com/forums/thread/72148) | Bluetooth Classic (SPP) needs MFi. Public CoreBluetooth is BLE only. |
 | ZPL barcode and `^BQ` parameters | Zebra ZPL II programming guide | Parameter order as documented. |
 | BPLA text record layout | Datamax DPL record table (rotation, font, width mult, height mult, size, row, column) and the format strings inside SNBC's own library | Same layout. |
@@ -31,6 +30,17 @@ Sources for the platform calls (official docs; the pages were not fetched again 
 - iOS: `CBCentralManager` (`scanForPeripherals`, `connect`, `retrievePeripherals(withIdentifiers:)`), `CBPeripheral` (`maximumWriteValueLength(for:)`, `canSendWriteWithoutResponse`,
   `peripheralIsReady(toSendWriteWithoutResponse:)`, `writeValue(_:for:type:)`, `setNotifyValue`), `CBATTError`, `CBError.peerRemovedPairingInformation`.
 - The Nitro Swift and Kotlin API (`Promise`, `ArrayBuffer`) was read in `node_modules/react-native-nitro-modules`.
+- Read for the review round (engineers' write-ups, not official docs; none was run by us):
+  - Android keeps `BluetoothGatt` busy for every write, also without response, until `onCharacteristicWrite`; a write sent before it gets `ERROR_GATT_WRITE_REQUEST_BUSY (201)`; completing a no-response write early drops failures:
+    [blew PR 53](https://github.com/mcginty/blew/pull/53), [android-ble-rs issue 3](https://github.com/uglyoldbob/android-ble-rs/issues/3), [Making Android BLE work, part 3 (M. van Welie)](https://medium.com/@martijn.van.welie/making-android-ble-work-part-3-117d3a8aee23), [Punch Through Android BLE guide](https://punchthrough.com/android-ble-guide/).
+    Used for: wait for the callback; retry a refused write; one operation at a time; a probe in case a phone does not call back.
+  - iOS: wait for the callback between writes with response (Apple engineer in [Apple forums 800026](https://developer.apple.com/forums/thread/800026)); for writes without response use `canSendWriteWithoutResponse` and `peripheralIsReady(toSendWriteWithoutResponse:)`
+    ([Apple: canSendWriteWithoutResponse](https://developer.apple.com/documentation/corebluetooth/cbperipheral/cansendwritewithoutresponse)). Used for: `BleCentral`/`HybridBleConnection` pump.
+  - Usable payload = MTU - 3; request the MTU before service discovery on Android; write without response fits several packets per connection event; `CONNECTION_PRIORITY_HIGH` for bulk data:
+    [Reliable BLE data transfer (U. Nguyen)](https://uynguyen.github.io/2026/04/12/Reliable-BLE-Data-Transfer-MTU-Throughput-Chunking/), [A Practical Guide to BLE Throughput (Memfault Interrupt)](https://interrupt.memfault.com/blog/ble-throughput-primer).
+    Not done: the connection priority is not set back to balanced after a job (the link closes anyway).
+  - Large label jobs on BLE printers: chunk to the MTU with a short delay so the printer buffer does not overflow ([flutter_print_label](https://pub.dev/packages/flutter_print_label)); very tall images can fail on small printer buffers, so split very long jobs.
+  - Reading reference stacks for low-level behavior: trace one path (here: one write) instead of reading a file top to bottom ([LKML thread on learning kernel code](https://lkml.iu.edu/hypermail/linux/kernel/9801.2/0972.html)); BlueZ [`src/shared/gatt-client.h`](https://coral.googlesource.com/bluez-imx/+/refs/tags/5.27/src/shared/gatt-client.h) and the Zephyr [Central GATT Write sample](https://docs.zephyrproject.org/latest/samples/bluetooth/central_gatt_write/README.html) show the same write-without-response pending-limit idea.
 - Bluetooth SIG: 16-bit UUIDs 1800, 1801, 180A (Generic Access, Generic Attribute, Device Information) and the Bluetooth base UUID `0000xxxx-0000-1000-8000-00805f9b34fb`.
 
 Status:
@@ -39,7 +49,7 @@ Status:
 - Swift (`ios/*.swift`) was written against the generated Nitro Swift specs. It is NOT compiled: there is no Swift toolchain in this environment or in CI.
 - The selection rule (score +4 / +2 / +1) and the defaults (MTU request 247, 10 ms delay for writes without response, 5 s write timeout, 10 s connect timeout, 15 s discovery timeout) are our choices. They are not from a source and not tuned on a printer.
 - A user reported (manual test with nRF Connect and a hand-written BPLZ payload, not run by this package) that one TVS LP 46 Dlite prints over BLE. That is the only hardware evidence.
-- Android: the code assumes `onCharacteristicWrite` also fires for "write without response" (this is how the stack works as far as we know). Not checked on a device.
+- Android: the code expects `onCharacteristicWrite` for "write without response" (reported by the sources above) and has a probe in case a phone does not. Not checked on a device.
 
 ## Compiled, not run
 

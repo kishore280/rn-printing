@@ -15,6 +15,7 @@ import {
   normalizeUuid as normalize,
   selectCharacteristics,
 } from './bleGatt';
+import { chunkBytes } from './chunk';
 import { Inbox } from './inbox';
 
 // ---------------------------------------------------------------------------------------
@@ -65,12 +66,19 @@ export interface BleConnectOptions {
   timeoutMs?: number | undefined;
 }
 
-export type BleConnectionState = 'connecting' | 'connected' | 'disconnecting' | 'disconnected';
+/**
+ * Life cycle of the link and of a write:
+ * `connecting` > `connected` > `writing` > `connected` (write completed) ... > `disconnecting` > `disconnected`.
+ * A failed write, a timeout, a cancel and a lost link all end in `disconnected`, with `reason` and `error`.
+ */
+export type BleConnectionState = 'connecting' | 'connected' | 'writing' | 'disconnecting' | 'disconnected';
 
 export interface BleConnectionStateEvent {
   state: BleConnectionState;
   /** Why the link closed. Set when `state` is 'disconnected'. */
   reason?: string | undefined;
+  /** The error that ended the link, when there was one (a failed write or connect). Not set for a plain disconnect or a lost link. */
+  error?: TransportError | undefined;
 }
 
 /**
@@ -100,8 +108,8 @@ export interface BluetoothLETransportOptions extends BleSelectionOptions {
   /** Upper limit for one write, in bytes. The link limit still applies. Default: the link limit. */
   chunkSize?: number | undefined;
   /**
-   * Wait this long between writes, in ms. Default 0 for writes with response.
-   * Default 10 for writes without response, because the printer cannot tell you when its buffer is full.
+   * Wait this long between pieces, in ms. Default 0 for write with response.
+   * Default 10 for write without response, because the printer cannot tell you when its buffer is full.
    * Neither default is checked on a printer.
    */
   chunkDelayMs?: number | undefined;
@@ -114,7 +122,7 @@ export interface BluetoothLETransportOptions extends BleSelectionOptions {
 }
 
 export interface BleWriteOptions {
-  /** Abort to stop a long write between pieces. The write rejects with code E_CANCELLED. */
+  /** Abort to stop a long write between pieces. The write rejects with code E_CANCELLED and the link closes. */
   signal?: AbortSignalLike | undefined;
   /** Called after each piece. */
   onProgress?: ((sentBytes: number, totalBytes: number) => void) | undefined;
@@ -420,7 +428,7 @@ export class BluetoothLETransport implements Transport {
     return () => this.stateListeners.delete(listener);
   }
 
-  /** Stop the write that runs now, between two pieces. The write rejects with E_CANCELLED. */
+  /** Stop the write that runs now, between two pieces. The write rejects with E_CANCELLED and the link closes. */
   cancel(): void {
     this.cancelled = true;
   }
@@ -470,8 +478,9 @@ export class BluetoothLETransport implements Transport {
       this.link = null;
       this.picked = null;
       if (link) await link.disconnect().catch(() => undefined);
-      this.setState('disconnected', e instanceof Error ? e.message : String(e));
-      throw classify(e, 'E_CONNECT');
+      const error = classify(e, 'E_CONNECT');
+      this.setState('disconnected', error.message, error);
+      throw error;
     }
   }
 
@@ -500,7 +509,7 @@ export class BluetoothLETransport implements Transport {
   }
 
   async isConnected(): Promise<boolean> {
-    return this.link !== null && this.state === 'connected' && this.link.isConnected;
+    return this.link !== null && (this.state === 'connected' || this.state === 'writing') && this.link.isConnected;
   }
 
   /**
@@ -536,22 +545,46 @@ export class BluetoothLETransport implements Transport {
     if (!link || !pick || this.state !== 'connected') throw new TransportError('Not connected', 'E_NOT_CONNECTED');
     this.cancelled = false;
     const gen = this.generation;
-    const size = this.payloadSize;
+    const pieces = chunkBytes(data, this.payloadSize);
     const delay = this.settings.chunkDelayMs ?? (pick.withResponse ? 0 : 10);
     const timeoutMs = this.settings.writeTimeoutMs ?? 5000;
+    if (pieces.length === 0) return;
 
-    for (let offset = 0; offset < data.length; offset += size) {
-      if (this.cancelled || options.signal?.aborted) {
-        throw new TransportError(`Write cancelled after ${offset} of ${data.length} bytes`, 'E_CANCELLED');
+    this.setState('writing');
+    let sent = 0;
+    try {
+      for (const [index, piece] of pieces.entries()) {
+        if (this.cancelled || options.signal?.aborted) {
+          throw new TransportError(`Write cancelled after ${sent} of ${data.length} bytes`, 'E_CANCELLED');
+        }
+        if (gen !== this.generation || !link.isConnected) {
+          throw new TransportError(`The device disconnected after ${sent} of ${data.length} bytes: ${this.lostReason ?? 'link lost'}`, 'E_DISCONNECTED');
+        }
+        await this.writePiece(link, pick, piece, timeoutMs, sent, data.length);
+        sent += piece.length;
+        options.onProgress?.(sent, data.length);
+        if (delay > 0 && index < pieces.length - 1) await sleep(delay);
       }
-      if (gen !== this.generation || !link.isConnected) {
-        throw new TransportError(`The device disconnected after ${offset} of ${data.length} bytes: ${this.lostReason ?? 'link lost'}`, 'E_DISCONNECTED');
-      }
-      const piece = data.subarray(offset, Math.min(offset + size, data.length));
-      await this.writePiece(link, pick, piece, timeoutMs, offset, data.length);
-      options.onProgress?.(offset + piece.length, data.length);
-      if (delay > 0 && offset + size < data.length) await sleep(delay);
+    } catch (e) {
+      const error = classify(e, 'E_WRITE');
+      // The printer may hold half a job, and a native write may still be pending. Close the link,
+      // so no later write can follow a failed one. The next job opens a clean link.
+      await this.failLink(gen, error);
+      throw error;
     }
+    if (gen === this.generation) this.setState('connected');
+  }
+
+  private async failLink(gen: number, error: TransportError): Promise<void> {
+    // A lost or closed link was reported already.
+    if (gen !== this.generation || this.link === null) return;
+    const link = this.link;
+    this.generation++;
+    this.link = null;
+    this.picked = null;
+    this.unsubscribe = null;
+    this.setState('disconnected', error.message, error);
+    await link?.disconnect().catch(() => undefined);
   }
 
   private async writePiece(
@@ -592,9 +625,9 @@ export class BluetoothLETransport implements Transport {
     this.setState('disconnected', reason);
   }
 
-  private setState(state: BleConnectionState, reason?: string): void {
+  private setState(state: BleConnectionState, reason?: string, error?: TransportError): void {
     this.state = state;
-    for (const l of [...this.stateListeners]) l({ state, reason });
+    for (const l of [...this.stateListeners]) l({ state, reason, error });
   }
 }
 

@@ -30,9 +30,7 @@ export type { PrinterStatus, ExtendedStatus } from './status';
 export type { Transport, ReadOptions } from './transport';
 export { BluetoothClassic, BluetoothClassicTransport } from './transports/bluetoothClassic';
 export type { PairedDevice, BluetoothClassicOptions } from './transports/bluetoothClassic';
-export { BleTransport, blePlxClient } from './transports/ble';
-export type { BleClient, BleCharacteristicInfo, BleTransportOptions, BlePlxManagerLike } from './transports/ble';
-export { BluetoothLE, BluetoothLETransport, BleDeviceConnection, bleFilters, classify as classifyBleError } from './transports/bluetoothLE';
+export { BluetoothLE, BluetoothLETransport, bleFilters } from './transports/bluetoothLE';
 export type {
   BleAdapterState,
   BleDevice,
@@ -44,8 +42,9 @@ export type {
   BlePrinterProfile,
   BluetoothLETransportOptions,
   BleWriteOptions,
+  BleDeviceConnection,
 } from './transports/bluetoothLE';
-export { selectCharacteristics, describeGatt, normalizeUuid } from './transports/bleGatt';
+export { describeGatt } from './transports/bleGatt';
 export type { BleGattCharacteristic, BleSelection, BleSelectionOptions, BleSelector, BleWriteMode } from './transports/bleGatt';
 export { TcpTransport } from './transports/tcp';
 export type { TcpTransportOptions, TcpSocketLike } from './transports/tcp';
@@ -54,6 +53,6 @@ export { UnsupportedPlatformError, TransportError, PrinterNotReadyError, NativeM
 export { utf8Encode, base64Encode, base64Decode } from './encoding';
 export { ditherRgba, ditherGray, compressBitmap } from './image';
 export type { Bitmap1bpp, DitherMethod, DitherOptions } from './bitmap';
-export { getNativeCodec, requireCodec, setNativeCodec, setBluetoothLE } from './native';
+export { getNativeCodec, requireCodec, setNativeCodec } from './native';
 export type { ReconnectOptions, ConnectionEvent } from './reconnect';
 export type { LabelPrinterOptions } from './printer';
