@@ -55,7 +55,7 @@ jobs:
           distribution: temurin
           java-version: 17
       - run: npm ci
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .cache/kotlin-check
           key: kotlin-check-${{ hashFiles('scripts/check-kotlin.sh', 'package-lock.json') }}
