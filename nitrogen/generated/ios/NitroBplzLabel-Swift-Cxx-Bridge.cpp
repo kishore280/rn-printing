@@ -79,6 +79,14 @@ namespace margelo::nitro::bplzlabel::bridge::swift {
     };
   }
   
+  // pragma MARK: std::function<void(bool /* result */)>
+  Func_void_bool create_Func_void_bool(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_bool::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](bool result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
   // pragma MARK: std::function<void(const BleScanResult& /* result */)>
   Func_void_BleScanResult create_Func_void_BleScanResult(void* NON_NULL swiftClosureWrapper) noexcept {
     auto swiftClosure = NitroBplzLabel::Func_void_BleScanResult::fromUnsafe(swiftClosureWrapper);

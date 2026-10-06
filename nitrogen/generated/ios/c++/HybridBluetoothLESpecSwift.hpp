@@ -93,6 +93,14 @@ namespace margelo::nitro::bplzlabel {
         std::rethrow_exception(__result.error());
       }
     }
+    inline std::shared_ptr<Promise<bool>> requestEnable() override {
+      auto __result = _swiftPart.requestEnable();
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
     inline std::shared_ptr<Promise<void>> scan(const BleScanOptions& options, const std::function<void(const BleScanResult& /* result */)>& onResult) override {
       auto __result = _swiftPart.scan(std::forward<decltype(options)>(options), onResult);
       if (__result.hasError()) [[unlikely]] {

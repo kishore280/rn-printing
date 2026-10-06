@@ -1,6 +1,7 @@
 package com.margelo.nitro.bplzlabel
 
 import android.Manifest
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
@@ -19,6 +20,7 @@ import android.os.Looper
 import android.os.ParcelUuid
 import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
+import com.facebook.react.bridge.BaseActivityEventListener
 import com.facebook.react.bridge.ReactApplicationContext
 import com.margelo.nitro.NitroModules
 import com.margelo.nitro.core.Promise
@@ -80,6 +82,39 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       stateReceiver = receiver
     }
     listener(getState())
+  }
+
+  override fun requestEnable(): Promise<Boolean> {
+    val bt: BluetoothAdapter
+    try {
+      bt = adapter ?: throw BleError("E_NO_ADAPTER", "This phone has no Bluetooth adapter")
+      if (bt.isEnabled) return Promise.resolved(true)
+      requireConnectPermission()
+    } catch (e: Throwable) {
+      return Promise.rejected(e)
+    }
+    val activity = context.currentActivity
+      ?: return Promise.rejected(BleError("E_BLUETOOTH_OFF", "Bluetooth is off, and there is no screen to ask on"))
+
+    val promise = Promise<Boolean>()
+    val listener = object : BaseActivityEventListener() {
+      override fun onActivityResult(a: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != REQUEST_ENABLE) return
+        context.removeActivityEventListener(this)
+        promise.resolve(resultCode == Activity.RESULT_OK && bt.isEnabled)
+      }
+    }
+    // The system dialog needs the main thread. It tells the answer to the activity, and the listener hands it on.
+    main.post {
+      try {
+        context.addActivityEventListener(listener)
+        activity.startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), REQUEST_ENABLE)
+      } catch (e: Exception) {
+        context.removeActivityEventListener(listener)
+        promise.reject(BleError("E_BLUETOOTH_OFF", "Bluetooth is off, and the phone could not ask: ${e.message}"))
+      }
+    }
+    return promise
   }
 
   override fun scan(options: BleScanOptions, onResult: (result: BleScanResult) -> Unit): Promise<Unit> {
@@ -242,5 +277,10 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       manufacturerData = manufacturer,
       txPower = if (tx == null || tx == Int.MIN_VALUE) null else tx.toDouble(),
     )
+  }
+
+  companion object {
+    /** Request code of the "turn on Bluetooth" dialog. */
+    private const val REQUEST_ENABLE = 7421
   }
 }

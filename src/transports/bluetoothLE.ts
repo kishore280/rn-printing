@@ -332,6 +332,15 @@ export const BluetoothLE = {
     return permissions.every((p) => (result as Record<string, string>)[p] === PermissionsAndroid.RESULTS.GRANTED);
   },
 
+  /**
+   * Show the system dialog that asks the user to turn Bluetooth on (Android: "Turn on Bluetooth?"). Resolves true when it is on,
+   * false when the user said no. Ask for the permissions first (`requestPermissions()`): Android 12+ needs BLUETOOTH_CONNECT.
+   * iOS has no such dialog for apps: it shows its own alert at the first use, and this resolves the current state.
+   */
+  async requestEnable(): Promise<boolean> {
+    return wrap(native().requestEnable(), 'E_BLUETOOTH_OFF');
+  },
+
   /** The adapter state: on, off, unauthorized, unsupported, resetting or unknown. */
   getState(): BleAdapterState {
     return native().getState() as BleAdapterState;

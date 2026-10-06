@@ -43,6 +43,10 @@ abstract class HybridBluetoothLESpec: HybridObject() {
     return __result
   }
   
+  @DoNotStrip
+  @Keep
+  abstract fun requestEnable(): Promise<Boolean>
+  
   abstract fun scan(options: BleScanOptions, onResult: (result: BleScanResult) -> Unit): Promise<Unit>
   
   @DoNotStrip

@@ -74,6 +74,22 @@ namespace margelo::nitro::bplzlabel {
     static const auto method = _javaPart->javaClassStatic()->getMethod<void(jni::alias_ref<JFunc_void_std__string::javaobject> /* listener */)>("setStateListener_cxx");
     method(_javaPart, JFunc_void_std__string_cxx::fromCpp(listener));
   }
+  std::shared_ptr<Promise<bool>> JHybridBluetoothLESpec::requestEnable() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>()>("requestEnable");
+    auto __result = method(_javaPart);
+    return [&]() {
+      auto __promise = Promise<bool>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JBoolean>(__boxedResult);
+        __promise->resolve(static_cast<bool>(__result->value()));
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
   std::shared_ptr<Promise<void>> JHybridBluetoothLESpec::scan(const BleScanOptions& options, const std::function<void(const BleScanResult& /* result */)>& onResult) {
     static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(jni::alias_ref<JBleScanOptions> /* options */, jni::alias_ref<JFunc_void_BleScanResult::javaobject> /* onResult */)>("scan_cxx");
     auto __result = method(_javaPart, JBleScanOptions::fromCpp(options), JFunc_void_BleScanResult_cxx::fromCpp(onResult));

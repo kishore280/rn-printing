@@ -56,6 +56,7 @@ namespace margelo::nitro::bplzlabel {
     // Methods
     std::string getState() override;
     void setStateListener(const std::function<void(const std::string& /* state */)>& listener) override;
+    std::shared_ptr<Promise<bool>> requestEnable() override;
     std::shared_ptr<Promise<void>> scan(const BleScanOptions& options, const std::function<void(const BleScanResult& /* result */)>& onResult) override;
     std::shared_ptr<Promise<void>> stopScan() override;
     std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>> connect(const std::string& deviceId, double timeoutMs, const std::function<void(const std::string& /* reason */)>& onDisconnect) override;

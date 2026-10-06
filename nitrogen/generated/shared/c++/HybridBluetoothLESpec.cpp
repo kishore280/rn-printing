@@ -16,6 +16,7 @@ namespace margelo::nitro::bplzlabel {
     registerHybrids(this, [](Prototype& prototype) {
       prototype.registerHybridMethod("getState", &HybridBluetoothLESpec::getState);
       prototype.registerHybridMethod("setStateListener", &HybridBluetoothLESpec::setStateListener);
+      prototype.registerHybridMethod("requestEnable", &HybridBluetoothLESpec::requestEnable);
       prototype.registerHybridMethod("scan", &HybridBluetoothLESpec::scan);
       prototype.registerHybridMethod("stopScan", &HybridBluetoothLESpec::stopScan);
       prototype.registerHybridMethod("connect", &HybridBluetoothLESpec::connect);

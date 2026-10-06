@@ -109,12 +109,12 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
   private var connecting: [UUID: (conn: HybridBleConnection, settle: Settle<(any HybridBleConnectionSpec)>)] = [:]
   private var connections: [UUID: HybridBleConnection] = [:]
 
-  /// Created on first use, so the permission dialog appears when the app first uses BLE, not at start-up.
+  /// Created on first use, so the permission dialog (and, with Bluetooth off, iOS's own "Turn on Bluetooth" alert) appears when the app first uses BLE, not at start-up.
   var manager: CBCentralManager {
     creation.lock()
     defer { creation.unlock() }
     if let m = managerStorage { return m }
-    let m = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
+    let m = CBCentralManager(delegate: self, queue: queue, options: [CBCentralManagerOptionShowPowerAlertKey: true])
     managerStorage = m
     return m
   }

@@ -99,6 +99,8 @@ class FakeLink {
 interface FakeNativeOptions extends FakeLinkOptions {
   state?: string;
   connectError?: Error;
+  enableAnswer?: boolean;
+  enableError?: Error;
   /** Called for each scan. Emit results through `emit`, then resolve to end the scan. */
   scanImpl?: (options: BleScanOptions, emit: (r: BleScanResult) => void) => Promise<void>;
 }
@@ -109,9 +111,11 @@ function fakeNative(opts: FakeNativeOptions = {}) {
   let stopCalls = 0;
   let stateListener: ((s: string) => void) | null = null;
   let stopScanResolver: (() => void) | null = null;
+  let enableCalls = 0;
   const mod = {
     getState: () => opts.state ?? 'on',
     setStateListener: (l: (s: string) => void) => { stateListener = l; },
+    requestEnable: async () => { enableCalls++; if (opts.enableError) throw opts.enableError; return opts.enableAnswer ?? true; },
     scan: (options: BleScanOptions, onResult: (r: BleScanResult) => void) =>
       opts.scanImpl
         ? opts.scanImpl(options, onResult)
@@ -126,7 +130,7 @@ function fakeNative(opts: FakeNativeOptions = {}) {
     },
   } as unknown as NativeBluetoothLE;
   setBluetoothLE(mod);
-  return { links, connectCalls, stopCalls: () => stopCalls, emitState: (s: string) => stateListener?.(s) };
+  return { links, connectCalls, enableCalls: () => enableCalls, stopCalls: () => stopCalls, emitState: (s: string) => stateListener?.(s) };
 }
 
 const scanResult = (id: string, name: string, rssi?: number, extra: Partial<BleScanResult> = {}): BleScanResult => ({
@@ -1095,5 +1099,22 @@ describe('BluetoothLETransport: diagnostics', () => {
     await expect(t.write(bytes(100))).rejects.toMatchObject({ code: 'E_WRITE' });
     expect(t.diagnostics().lastWrite).toMatchObject({ ok: false, errorCode: 'E_WRITE', bytes: 100, chunks: 5, sentBytes: 40 });
     expect(t.diagnostics().state).toBe('disconnected');
+  });
+});
+
+describe('BluetoothLE.requestEnable (the system "turn on Bluetooth" dialog)', () => {
+  it('resolves true when the user says yes, false when the user says no', async () => {
+    const yes = fakeNative({ state: 'off', enableAnswer: true });
+    expect(await BluetoothLE.requestEnable()).toBe(true);
+    expect(yes.enableCalls()).toBe(1);
+    fakeNative({ state: 'off', enableAnswer: false });
+    expect(await BluetoothLE.requestEnable()).toBe(false);
+  });
+
+  it('maps the native errors to codes (permission missing, no screen to ask on)', async () => {
+    fakeNative({ enableError: new Error('com.margelo.nitro.bplzlabel.a: [E_PERMISSION] The BLUETOOTH_CONNECT permission is not granted\n  at x.y(z:1)') });
+    await expect(BluetoothLE.requestEnable()).rejects.toMatchObject({ code: 'E_PERMISSION', message: 'The BLUETOOTH_CONNECT permission is not granted' });
+    fakeNative({ enableError: new Error('[E_BLUETOOTH_OFF] Bluetooth is off, and there is no screen to ask on') });
+    await expect(BluetoothLE.requestEnable()).rejects.toMatchObject({ code: 'E_BLUETOOTH_OFF' });
   });
 });

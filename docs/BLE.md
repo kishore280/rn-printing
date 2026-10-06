@@ -159,6 +159,7 @@ connected > disconnecting > disconnected         (you called disconnect)
 If the printer goes out of range or switches off, the state changes at once and a running `write()` rejects with `E_DISCONNECTED`
 (the message says how many bytes were sent). The next `LabelPrinter` job connects again. There is no background reconnect loop. `transport.reconnect()` does one reconnect when you call it.
 `BluetoothLE.getState()` and `BluetoothLE.onStateChange()` show Bluetooth on, off, `unauthorized`, `unsupported`.
+When Bluetooth is off, ask for it with `await BluetoothLE.requestEnable()`: on Android it shows the system dialog "Turn on Bluetooth?" and resolves true or false (call `requestPermissions()` first). iOS has no such dialog for apps: it shows its own alert at the first use.
 
 ### Pairing (bonding)
 

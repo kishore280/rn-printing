@@ -26,6 +26,14 @@ export interface BluetoothLE extends HybridObject<{ android: 'kotlin'; ios: 'swi
   setStateListener(listener: (state: string) => void): void
 
   /**
+   * Ask the user to turn Bluetooth on, with the system dialog ("Turn on Bluetooth?" on Android).
+   * Resolves true when Bluetooth is on (it was on, or the user said yes), false when the user said no.
+   * Android 12+ needs the BLUETOOTH_CONNECT permission first. iOS has no such dialog for apps: it resolves
+   * the current state at once (iOS shows its own "Turn on Bluetooth" alert when Bluetooth is off at the first use).
+   */
+  requestEnable(): Promise<boolean>
+
+  /**
    * Scan for devices. Calls `onResult` for each device. The promise resolves when the
    * scan ends (`timeoutMs` passed, or `stopScan()` was called). It rejects when the
    * scan cannot start. A new scan stops an earlier one.

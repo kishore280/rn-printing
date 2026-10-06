@@ -61,6 +61,7 @@ namespace margelo::nitro::bplzlabel {
       // Methods
       virtual std::string getState() = 0;
       virtual void setStateListener(const std::function<void(const std::string& /* state */)>& listener) = 0;
+      virtual std::shared_ptr<Promise<bool>> requestEnable() = 0;
       virtual std::shared_ptr<Promise<void>> scan(const BleScanOptions& options, const std::function<void(const BleScanResult& /* result */)>& onResult) = 0;
       virtual std::shared_ptr<Promise<void>> stopScan() = 0;
       virtual std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>> connect(const std::string& deviceId, double timeoutMs, const std::function<void(const std::string& /* reason */)>& onDisconnect) = 0;

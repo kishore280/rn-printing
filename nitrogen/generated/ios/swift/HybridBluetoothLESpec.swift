@@ -15,6 +15,7 @@ public protocol HybridBluetoothLESpec_protocol: HybridObject {
   // Methods
   func getState() throws -> String
   func setStateListener(listener: @escaping (_ state: String) -> Void) throws -> Void
+  func requestEnable() throws -> Promise<Bool>
   func scan(options: BleScanOptions, onResult: @escaping (_ result: BleScanResult) -> Void) throws -> Promise<Void>
   func stopScan() throws -> Promise<Void>
   func connect(deviceId: String, timeoutMs: Double, onDisconnect: @escaping (_ reason: String) -> Void) throws -> Promise<(any HybridBleConnectionSpec)>
