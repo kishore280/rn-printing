@@ -182,8 +182,18 @@ export interface BleWriteOptions {
 export function classify(error: unknown, fallback: string): TransportError {
   if (error instanceof TransportError) return error;
   const raw = error instanceof Error ? error.message : String(error);
-  const m = /^\s*\[(E_[A-Z_]+)\]\s*([\s\S]*)$/.exec(raw);
-  return m ? new TransportError(m[2] ?? raw, m[1]) : new TransportError(raw, fallback);
+  // Nitro puts the Java class name before the message and the stack after it on Android
+  // (`com.margelo.nitro.bplzlabel.a: [E_BLUETOOTH_OFF] Bluetooth is off\n  at ...`). So the code is searched in the
+  // text, and the message is the rest of that line.
+  const m = /\[(E_[A-Z_]+)\][ \t]*([^\r\n]*)/.exec(raw);
+  if (m) return new TransportError(m[2]?.trim() || m[1] || raw, m[1]);
+  return new TransportError(firstLine(raw), fallback);
+}
+
+/** The first line of a message, without a leading Java class name: the stack of a native error is not for the user. */
+function firstLine(text: string): string {
+  const line = (text.split(/\r?\n/)[0] ?? text).trim();
+  return line.replace(/^(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*:\s+/, '') || text.trim();
 }
 
 async function wrap<T>(job: Promise<T> | T, fallback: string): Promise<T> {

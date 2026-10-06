@@ -405,6 +405,23 @@ describe('classify', () => {
     expect(e).toBeInstanceOf(TransportError);
     expect(e).toMatchObject({ code: 'E_AUTH', message: 'needs pairing' });
   });
+  it('finds the code in an Android message with the Java class name before it and the stack after it', () => {
+    const android =
+      'com.margelo.nitro.bplzlabel.a: [E_BLUETOOTH_OFF] Bluetooth is off\n' +
+      '  at com.margelo.nitro.bplzlabel.HybridBluetoothLE.requireAdapter(r8-map-id-6f201ba563b4d879016:38)\n' +
+      '  at com.margelo.nitro.bplzlabel.HybridBluetoothLE.scan(r8-map-id-6f201ba563b4d879016:80)';
+    const e = classify(new Error(android), 'E_SCAN_FAILED');
+    expect(e).toMatchObject({ code: 'E_BLUETOOTH_OFF', message: 'Bluetooth is off' });
+    expect(e.message).not.toContain('\n');
+    expect(classify(new Error('java.lang.Error: [E_PERMISSION] The BLUETOOTH_SCAN permission is not granted'), 'E_X')).toMatchObject({
+      code: 'E_PERMISSION',
+      message: 'The BLUETOOTH_SCAN permission is not granted',
+    });
+  });
+  it('shows only the first line, without the Java class name, when there is no code', () => {
+    const e = classify(new Error('java.lang.IllegalStateException: boom\n  at a.b.c(d:1)'), 'E_CONNECT');
+    expect(e).toMatchObject({ code: 'E_CONNECT', message: 'boom' });
+  });
   it('uses the fallback when there is no code', () => {
     expect(classify(new Error('plain'), 'E_CONNECT')).toMatchObject({ code: 'E_CONNECT', message: 'plain' });
     expect(classify('text', 'E_X')).toMatchObject({ code: 'E_X' });
