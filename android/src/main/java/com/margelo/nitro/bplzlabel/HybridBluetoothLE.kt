@@ -101,7 +101,12 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       override fun onActivityResult(a: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode != REQUEST_ENABLE) return
         context.removeActivityEventListener(this)
-        promise.resolve(resultCode == Activity.RESULT_OK && bt.isEnabled)
+        if (resultCode != Activity.RESULT_OK) {
+          promise.resolve(false) // the user said no
+        } else {
+          // The user said yes. The adapter needs a moment to be on.
+          waitUntilOn(bt, promise, System.currentTimeMillis() + ENABLE_WAIT_MS)
+        }
       }
     }
     // The system dialog needs the main thread. It tells the answer to the activity, and the listener hands it on.
@@ -115,6 +120,12 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       }
     }
     return promise
+  }
+
+  private fun waitUntilOn(bt: BluetoothAdapter, promise: Promise<Boolean>, deadline: Long) {
+    if (bt.isEnabled) promise.resolve(true)
+    else if (System.currentTimeMillis() >= deadline) promise.resolve(false)
+    else main.postDelayed({ waitUntilOn(bt, promise, deadline) }, ENABLE_POLL_MS)
   }
 
   override fun scan(options: BleScanOptions, onResult: (result: BleScanResult) -> Unit): Promise<Unit> {
@@ -282,5 +293,7 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
   companion object {
     /** Request code of the "turn on Bluetooth" dialog. */
     private const val REQUEST_ENABLE = 7421
+    private const val ENABLE_WAIT_MS = 5000L
+    private const val ENABLE_POLL_MS = 100L
   }
 }
