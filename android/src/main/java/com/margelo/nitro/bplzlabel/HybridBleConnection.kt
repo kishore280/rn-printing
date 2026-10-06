@@ -15,7 +15,6 @@ import com.facebook.proguard.annotations.DoNotStrip
 import com.margelo.nitro.core.ArrayBuffer
 import com.margelo.nitro.core.Promise
 import java.util.UUID
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -42,7 +41,7 @@ class HybridBleConnection(
   @Volatile private var gatt: BluetoothGatt? = null
   @Volatile private var connected = false
   @Volatile private var mtuValue = DEFAULT_MTU
-  @Volatile private var pending: CompletableFuture<Int>? = null
+  private val guard = GattOpGuard()
   @Volatile private var requestedClose = false
 
   /**
@@ -118,7 +117,7 @@ class HybridBleConnection(
       } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
         val wasConnected = connected
         connected = false
-        pending?.complete(DISCONNECTED)
+        guard.abort(DISCONNECTED)
         closeGatt()
         if (!wasConnected) {
           settleConnect(BleError("E_CONNECT", "Cannot connect to ${device.address}: ${BleSupport.gattStatusText(status)}"))
@@ -133,20 +132,20 @@ class HybridBleConnection(
     }
 
     override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-      pending?.complete(status)
+      guard.complete(status)
     }
 
     override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
       if (status == BluetoothGatt.GATT_SUCCESS) mtuValue = mtu
-      pending?.complete(status)
+      guard.complete(status)
     }
 
     override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-      pending?.complete(status)
+      guard.complete(status)
     }
 
     override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-      pending?.complete(status)
+      guard.complete(status)
     }
 
     // Android 13 and newer call this one.
@@ -193,28 +192,37 @@ class HybridBleConnection(
     timeoutMs: Long,
     retryRefusal: Boolean = true,
     waitForCallback: Boolean = true,
+    oweOnTimeout: Boolean = true,
     start: () -> Boolean,
   ): Int {
     synchronized(opLock) {
       val deadline = System.currentTimeMillis() + timeoutMs
       while (true) {
         if (!connected) throw BleError("E_DISCONNECTED", "The device is not connected ($what)")
-        val future = CompletableFuture<Int>()
-        pending = future
+        val op = try {
+          guard.begin() // this operation is now the only one that a callback can complete
+        } catch (e: IllegalStateException) {
+          throw BleError("E_DISCONNECTED", "${e.message} ($what)")
+        }
+        var accepted = false
         try {
           if (start()) {
+            accepted = true
             if (!waitForCallback) return BluetoothGatt.GATT_SUCCESS
             val left = deadline - System.currentTimeMillis()
             val status = try {
-              future.get(maxOf(left, 1L), TimeUnit.MILLISECONDS)
+              op.future.get(maxOf(left, 1L), TimeUnit.MILLISECONDS)
             } catch (_: TimeoutException) {
+              // Give up this operation BEFORE anything else runs. Its callback may still come. The guard drops it.
+              guard.abandon(op, accepted = true, owe = oweOnTimeout)
               throw BleError("E_TIMEOUT", "$what timed out after $timeoutMs ms")
             }
             if (status == DISCONNECTED) throw BleError("E_DISCONNECTED", "The device disconnected during $what")
             return status
           }
         } finally {
-          pending = null
+          guard.finish(op) // no-op when the operation was given up already
+          if (!accepted) guard.abandon(op, accepted = false) // refused by Android: no callback is coming
         }
         if (!retryRefusal || System.currentTimeMillis() >= deadline) {
           throw BleError("E_WRITE", "Android refused to start $what (busy or the link is closing)")
@@ -302,7 +310,7 @@ class HybridBleConnection(
       } else {
         // First write without response: find out whether Android calls back.
         try {
-          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, start = start).also { noResponseCallback = true }
+          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, oweOnTimeout = false, start = start).also { noResponseCallback = true }
         } catch (e: BleError) {
           if (e.code != "E_TIMEOUT") throw e
           noResponseCallback = false // accepted by Android, no callback: this phone does not call back
@@ -354,6 +362,7 @@ class HybridBleConnection(
   override fun disconnect(): Promise<Unit> {
     return Promise.parallel {
       requestedClose = true
+      guard.abort(DISCONNECTED) // fail a waiting operation now; drop every later callback
       val g = gatt
       if (g != null && !disconnectNotified.get()) {
         try {

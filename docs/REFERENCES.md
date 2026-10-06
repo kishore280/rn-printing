@@ -41,6 +41,7 @@ Sources for the platform calls (official docs; the pages were not fetched again 
     Not done: the connection priority is not set back to balanced after a job (the link closes anyway).
   - Large label jobs on BLE printers: chunk to the MTU with a short delay so the printer buffer does not overflow ([flutter_print_label](https://pub.dev/packages/flutter_print_label)); very tall images can fail on small printer buffers, so split very long jobs.
   - Reading reference stacks for low-level behavior: trace one path (here: one write) instead of reading a file top to bottom ([LKML thread on learning kernel code](https://lkml.iu.edu/hypermail/linux/kernel/9801.2/0972.html)); BlueZ [`src/shared/gatt-client.h`](https://coral.googlesource.com/bluez-imx/+/refs/tags/5.27/src/shared/gatt-client.h) and the Zephyr [Central GATT Write sample](https://docs.zephyrproject.org/latest/samples/bluetooth/central_gatt_write/README.html) show the same write-without-response pending-limit idea.
+- Android late callbacks: `GattOpGuard` (android/.../GattOpGuard.kt) gives each GATT operation a token, drops the callback of a timed-out or cancelled operation, and closes on disconnect. Race-tested on a JVM (`test-native/GattOpGuardTest.kt`, run by `scripts/check-kotlin.sh`). Not run on a device. Limit: a callback has no id, so the guard relies on Android answering in order, one operation at a time.
 - Bluetooth SIG: 16-bit UUIDs 1800, 1801, 180A (Generic Access, Generic Attribute, Device Information) and the Bluetooth base UUID `0000xxxx-0000-1000-8000-00805f9b34fb`.
 
 Status:
