@@ -81,7 +81,7 @@ Measured by the owner with the Printer test screen (their report and photos). Mo
 | MTU | asked 247, got 247, payload 244 B |
 | Probe | `onCharacteristicWrite` was called for write without response (`probe callback: yes`), as the Android sources said |
 | Small label, QR, barcode, image (10 KB, 716 ms), large image (120,627 B, 495 chunks, 8.4 s, 14.4 KB/s) | OK, and the labels printed right (photos) |
-| 10 labels in a row | The app sent all 10 in 53 ms (107 B each) and said OK. **The printer printed only 2.** The data was accepted by the phone's Bluetooth stack, so the loss is after it: the printer or its module drops data that arrives while it prints. Not yet explained: other write modes, a pause between labels and `~HS` waiting (`LabelPrinter.printAll` options) are the next tests. |
+| 10 labels in a row | The app sent all 10 in 53 ms (107 B each) and said OK. The printer printed only 2 and then showed a red light. **The cause is not known.** The owner suspects the roll ran out after 2 labels (the printer stops with a media-out error and keeps the rest in its memory). That fits better than data loss: 1 KB is small, and 120 KB went through without loss in test 9. To settle it: load a new roll and press feed WITHOUT clearing the printer memory. If labels 3 to 10 then print, the data was never lost. Until then this result counts as "not valid", not as a failure of the transport. |
 
 ## Compiled, not run
 
