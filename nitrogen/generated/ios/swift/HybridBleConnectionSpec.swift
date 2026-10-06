@@ -13,6 +13,7 @@ public protocol HybridBleConnectionSpec_protocol: HybridObject {
   var id: String { get }
   var isConnected: Bool { get }
   var mtu: Double { get }
+  var noResponseCallback: String { get }
 
   // Methods
   func requestMtu(mtu: Double) throws -> Promise<Double>

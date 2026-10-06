@@ -138,6 +138,13 @@ new BluetoothLETransport(device, { profile });   // explicit options still win o
 
 Bytes are never changed or turned into text. `Uint8Array` goes to the native side as `ArrayBuffer`.
 
+### Measure a link (`diagnostics()`)
+
+`transport.diagnostics()` gives the numbers behind a link, for tests and logs: the write mode that was asked for and the one used (`withResponse`), the chosen characteristics,
+the MTU and what the MTU request did (`asked 247, got 185`), the bytes per write (`payloadSize`), the wait between pieces, `noResponseCallback` (Android: did the first write without response get a callback:
+`yes`, `no`, `unknown`; iOS: `not applicable`), the connect and discovery times, and `lastWrite` (bytes, chunks, payload size, delay, bytes accepted, time, error code and message).
+The example app in the billing project has a "Printer test" screen that runs the hardware test list with these numbers.
+
 ### Connection life cycle
 
 `transport.onConnectionState(fn)` gives the life cycle of the link and of each write:

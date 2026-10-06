@@ -73,6 +73,9 @@ class HybridBleConnection: HybridBleConnectionSpec {
 
   var isConnected: Bool { return connected }
 
+  /// iOS has no callback after a write without response: it uses canSendWriteWithoutResponse.
+  var noResponseCallback: String { return "not applicable" }
+
   /// iOS does not tell the MTU. The largest write without response is the MTU minus 3.
   var mtu: Double { return Double(peripheral.maximumWriteValueLength(for: .withoutResponse) + 3) }
 

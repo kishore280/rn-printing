@@ -141,6 +141,13 @@ open class HybridBleConnectionSpec_cxx {
       return self.__implementation.mtu
     }
   }
+  
+  public final var noResponseCallback: std.string {
+    @inline(__always)
+    get {
+      return std.string(self.__implementation.noResponseCallback)
+    }
+  }
 
   // Methods
   @inline(__always)

@@ -68,6 +68,11 @@ namespace margelo::nitro::bplzlabel {
     auto __result = method(_javaPart);
     return __result;
   }
+  std::string JHybridBleConnectionSpec::getNoResponseCallback() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<jni::JString>()>("getNoResponseCallback");
+    auto __result = method(_javaPart);
+    return __result->toStdString();
+  }
 
   // Methods
   std::shared_ptr<Promise<double>> JHybridBleConnectionSpec::requestMtu(double mtu) {

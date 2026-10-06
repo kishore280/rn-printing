@@ -19,6 +19,13 @@ export interface BleConnection extends HybridObject<{ android: 'kotlin'; ios: 's
   readonly mtu: number
 
   /**
+   * Did this link call back after a write without response? For tests and logs only.
+   * Android: `yes` or `no` once the first write without response was tried, else `unknown`.
+   * iOS: `not applicable` (iOS has no such callback; it uses canSendWriteWithoutResponse).
+   */
+  readonly noResponseCallback: string
+
+  /**
    * Ask for a bigger MTU. Android only. Resolves with the MTU the device agreed to.
    * On iOS it does nothing and resolves with the current `mtu`, because iOS negotiates the MTU by itself.
    */

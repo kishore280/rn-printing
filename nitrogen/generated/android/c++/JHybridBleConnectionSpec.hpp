@@ -53,6 +53,7 @@ namespace margelo::nitro::bplzlabel {
     std::string getId() override;
     bool getIsConnected() override;
     double getMtu() override;
+    std::string getNoResponseCallback() override;
 
   public:
     // Methods

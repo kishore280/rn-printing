@@ -53,6 +53,7 @@ namespace margelo::nitro::bplzlabel {
       virtual std::string getId() = 0;
       virtual bool getIsConnected() = 0;
       virtual double getMtu() = 0;
+      virtual std::string getNoResponseCallback() = 0;
 
     public:
       // Methods

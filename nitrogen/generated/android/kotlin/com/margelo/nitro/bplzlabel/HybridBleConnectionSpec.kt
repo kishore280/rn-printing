@@ -39,6 +39,10 @@ abstract class HybridBleConnectionSpec: HybridObject() {
   @get:DoNotStrip
   @get:Keep
   abstract val mtu: Double
+  
+  @get:DoNotStrip
+  @get:Keep
+  abstract val noResponseCallback: String
 
   // Methods
   @DoNotStrip

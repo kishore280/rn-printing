@@ -121,6 +121,48 @@ export interface BluetoothLETransportOptions extends BleSelectionOptions {
   subscribe?: boolean | undefined;
 }
 
+/** What one `write()` did. For tests and logs. */
+export interface BleWriteStats {
+  bytes: number;
+  /** Pieces the job was split into. */
+  chunks: number;
+  /** Bytes in one piece (the last one can be smaller). */
+  payloadSize: number;
+  chunkDelayMs: number;
+  withResponse: boolean;
+  /** Bytes the stack accepted before the write ended. */
+  sentBytes: number;
+  durationMs: number;
+  ok: boolean;
+  errorCode?: string | undefined;
+  errorMessage?: string | undefined;
+}
+
+/** The state of the link and the numbers behind it, for tests and logs (`transport.diagnostics()`). */
+export interface BleDiagnostics {
+  state: BleConnectionState;
+  deviceId: string;
+  /** The `writeMode` that was asked for. */
+  writeModeRequested: BleWriteMode;
+  /** What the transport uses: true = write with response. null when not connected. */
+  withResponse: boolean | null;
+  writeCharacteristic: { serviceUuid: string; uuid: string } | null;
+  notifyCharacteristic: { serviceUuid: string; uuid: string } | null;
+  /** The ATT MTU of the link (an estimate on iOS). null when not connected. */
+  mtu: number | null;
+  /** What the MTU request did: `skipped`, `asked 247, got 185`, or `asked 247, failed: ...`. */
+  mtuRequest: string;
+  /** Bytes in one write on this link (after `chunkSize`). null when not connected. */
+  payloadSize: number | null;
+  /** The wait between pieces that is used (the default of the write type, or `chunkDelayMs`). null when not connected. */
+  chunkDelayMs: number | null;
+  /** Android: did the first write without response get a callback (`yes`, `no`, `unknown`). iOS: `not applicable`. */
+  noResponseCallback: string | null;
+  connectMs: number | null;
+  discoverMs: number | null;
+  lastWrite: BleWriteStats | null;
+}
+
 export interface BleWriteOptions {
   /** Abort to stop a long write between pieces. The write rejects with code E_CANCELLED and the link closes. */
   signal?: AbortSignalLike | undefined;
@@ -399,6 +441,10 @@ export class BluetoothLETransport implements Transport {
   private lostReason: string | null = null;
   private cancelled = false;
   private unsubscribe: (() => Promise<void>) | null = null;
+  private mtuRequestText = 'not asked yet';
+  private connectMs: number | null = null;
+  private discoverMs: number | null = null;
+  private lastWriteStats: BleWriteStats | null = null;
 
   /** `device` is a scan result or its id. The transport opens its own link, so it can open it again later. */
   constructor(device: string | { id: string }, options: BluetoothLETransportOptions = {}) {
@@ -441,20 +487,31 @@ export class BluetoothLETransport implements Transport {
     this.cancelled = false;
     this.setState('connecting');
     let link: BleConnection | null = null;
+    this.mtuRequestText = 'skipped';
+    this.connectMs = null;
+    this.discoverMs = null;
     try {
+      const t0 = Date.now();
       link = await wrap(
         mod.connect(this.deviceId, this.settings.connectTimeoutMs ?? 10000, (reason) => this.onLinkLost(gen, reason)),
         'E_CONNECT'
       );
       this.link = link;
+      this.connectMs = Date.now() - t0;
 
       const wanted = this.settings.requestMtu ?? 247;
       if (wanted !== false && Platform.OS === 'android') {
         // A refused request is fine. The link then keeps the default MTU, and the chunk size follows it.
-        await link.requestMtu(wanted).catch(() => undefined);
+        const active = link;
+        this.mtuRequestText = await active.requestMtu(wanted).then(
+          (got) => `asked ${wanted}, got ${got}`,
+          (e: unknown) => `asked ${wanted}, failed: ${classify(e, 'E_TIMEOUT').message}`
+        );
       }
 
+      const t1 = Date.now();
       this.table = [...(await wrap(link.discover(), 'E_DISCOVERY'))];
+      this.discoverMs = Date.now() - t1;
       this.picked = selectCharacteristics(this.table, this.settings);
 
       const notify = this.settings.subscribe === false ? null : this.picked.notify;
@@ -537,6 +594,29 @@ export class BluetoothLETransport implements Transport {
     return Math.max(1, cap !== undefined ? Math.min(cap, native) : native);
   }
 
+  /** The state of the link and the numbers behind it. For tests and logs. */
+  diagnostics(): BleDiagnostics {
+    const link = this.link;
+    const pick = this.picked;
+    const live = link !== null && pick !== null;
+    return {
+      state: this.state,
+      deviceId: this.deviceId,
+      writeModeRequested: this.settings.writeMode ?? 'auto',
+      withResponse: pick ? pick.withResponse : null,
+      writeCharacteristic: pick ? { serviceUuid: pick.write.serviceUuid, uuid: pick.write.uuid } : null,
+      notifyCharacteristic: pick?.notify ? { serviceUuid: pick.notify.serviceUuid, uuid: pick.notify.uuid } : null,
+      mtu: link ? link.mtu : null,
+      mtuRequest: this.mtuRequestText,
+      payloadSize: live ? this.payloadSize : null,
+      chunkDelayMs: pick ? this.settings.chunkDelayMs ?? (pick.withResponse ? 0 : 10) : null,
+      noResponseCallback: link ? link.noResponseCallback : null,
+      connectMs: this.connectMs,
+      discoverMs: this.discoverMs,
+      lastWrite: this.lastWriteStats,
+    };
+  }
+
   // ---- internals ----
 
   private async writeNow(data: Uint8Array, options: BleWriteOptions): Promise<void> {
@@ -552,6 +632,19 @@ export class BluetoothLETransport implements Transport {
 
     this.setState('writing');
     let sent = 0;
+    const started = Date.now();
+    const stats = (error?: TransportError): BleWriteStats => ({
+      bytes: data.length,
+      chunks: pieces.length,
+      payloadSize: pieces[0]?.length ?? 0,
+      chunkDelayMs: delay,
+      withResponse: pick.withResponse,
+      sentBytes: sent,
+      durationMs: Date.now() - started,
+      ok: !error,
+      errorCode: error?.code,
+      errorMessage: error?.message,
+    });
     try {
       for (const [index, piece] of pieces.entries()) {
         if (this.cancelled || options.signal?.aborted) {
@@ -567,11 +660,13 @@ export class BluetoothLETransport implements Transport {
       }
     } catch (e) {
       const error = classify(e, 'E_WRITE');
+      this.lastWriteStats = stats(error);
       // The printer may hold half a job, and a native write may still be pending. Close the link,
       // so no later write can follow a failed one. The next job opens a clean link.
       await this.failLink(gen, error);
       throw error;
     }
+    this.lastWriteStats = stats();
     if (gen === this.generation) this.setState('connected');
   }
 

@@ -42,6 +42,8 @@ export type {
   BlePrinterProfile,
   BluetoothLETransportOptions,
   BleWriteOptions,
+  BleWriteStats,
+  BleDiagnostics,
   BleDeviceConnection,
 } from './transports/bluetoothLE';
 export { describeGatt } from './transports/bleGatt';

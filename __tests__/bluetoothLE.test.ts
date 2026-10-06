@@ -44,6 +44,7 @@ interface FakeLinkOptions {
   writeImpl?: (index: number, bytes: number[]) => Promise<void>;
   requestMtuImpl?: (mtu: number) => Promise<number>;
   discoverImpl?: () => Promise<BleCharacteristic[]>;
+  noResponseCallback?: string;
 }
 
 class FakeLink {
@@ -64,6 +65,7 @@ class FakeLink {
       id: 'dev-1',
       get isConnected() { return self.connected; },
       get mtu() { return self.opts.mtu ?? 23; },
+      get noResponseCallback() { return self.opts.noResponseCallback ?? 'unknown'; },
       requestMtu: async (mtu: number) => {
         self.mtuRequests.push(mtu);
         return self.opts.requestMtuImpl ? self.opts.requestMtuImpl(mtu) : (self.opts.mtu ?? 23);
@@ -1021,5 +1023,60 @@ describe('BluetoothLETransport: life cycle of a write', () => {
     (mod as unknown as { connect: unknown }).connect = async () => { tries++; throw new Error('[E_TIMEOUT] No answer after 10000 ms'); };
     await expect(printer.print('^XA^XZ')).rejects.toMatchObject({ code: 'E_TIMEOUT' });
     expect(tries).toBe(2); // not forever
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Diagnostics for tests and logs
+// ---------------------------------------------------------------------------------------
+
+describe('BluetoothLETransport: diagnostics', () => {
+  it('reports the link numbers after connect and the stats of the last write', async () => {
+    fakeNative({ mtu: 185, noResponseCallback: 'yes' });
+    const t = new BluetoothLETransport('dev-1', { writeMode: 'withoutResponse', chunkDelayMs: 3 });
+    expect(t.diagnostics()).toMatchObject({ state: 'disconnected', withResponse: null, mtu: null, payloadSize: null, lastWrite: null });
+    await t.connect();
+    const d = t.diagnostics();
+    expect(d).toMatchObject({
+      state: 'connected',
+      deviceId: 'dev-1',
+      writeModeRequested: 'withoutResponse',
+      withResponse: false,
+      mtu: 185,
+      mtuRequest: 'asked 247, got 185',
+      payloadSize: 182,
+      chunkDelayMs: 3,
+      noResponseCallback: 'yes',
+      writeCharacteristic: { serviceUuid: SERIAL_SVC, uuid: SERIAL_TX },
+      notifyCharacteristic: { serviceUuid: SERIAL_SVC, uuid: SERIAL_RX },
+    });
+    expect(d.connectMs).toBeGreaterThanOrEqual(0);
+    expect(d.discoverMs).toBeGreaterThanOrEqual(0);
+    await t.write(bytes(400));
+    expect(t.diagnostics().lastWrite).toMatchObject({
+      bytes: 400, chunks: 3, payloadSize: 182, chunkDelayMs: 3, withResponse: false, sentBytes: 400, ok: true,
+    });
+    expect(t.diagnostics().lastWrite?.durationMs).toBeGreaterThanOrEqual(6);
+  });
+
+  it('uses the write type default delay and says when the MTU request was skipped or failed', async () => {
+    fakeNative({});
+    const a = new BluetoothLETransport('dev-1', { writeMode: 'write', requestMtu: false });
+    await a.connect();
+    expect(a.diagnostics()).toMatchObject({ withResponse: true, chunkDelayMs: 0, mtuRequest: 'skipped' });
+    fakeNative({ requestMtuImpl: async () => { throw new Error('[E_WRITE] Android refused'); } });
+    const b = new BluetoothLETransport('dev-1');
+    await b.connect();
+    expect(b.diagnostics().mtuRequest).toBe('asked 247, failed: Android refused');
+    expect(b.diagnostics().chunkDelayMs).toBe(10);
+  });
+
+  it('keeps the stats of a failed write, with the code and the bytes that went out', async () => {
+    fakeNative({ mtu: 23, writeImpl: async (i) => { if (i === 2) throw new Error('[E_WRITE] GATT status 133'); } });
+    const t = new BluetoothLETransport('dev-1', { chunkDelayMs: 0 });
+    await t.connect();
+    await expect(t.write(bytes(100))).rejects.toMatchObject({ code: 'E_WRITE' });
+    expect(t.diagnostics().lastWrite).toMatchObject({ ok: false, errorCode: 'E_WRITE', bytes: 100, chunks: 5, sentBytes: 40 });
+    expect(t.diagnostics().state).toBe('disconnected');
   });
 });

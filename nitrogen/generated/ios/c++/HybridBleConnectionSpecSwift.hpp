@@ -81,6 +81,10 @@ namespace margelo::nitro::bplzlabel {
     inline double getMtu() noexcept override {
       return _swiftPart.getMtu();
     }
+    inline std::string getNoResponseCallback() noexcept override {
+      auto __result = _swiftPart.getNoResponseCallback();
+      return __result;
+    }
 
   public:
     // Methods

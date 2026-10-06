@@ -52,7 +52,7 @@ class HybridBleConnection(
    * in PROBE_MS, later pieces are done when Android accepts them. Android's "busy" answer (a refused
    * write, tried again by runOp) is then the flow control. This only protects against a hang.
    */
-  @Volatile private var noResponseCallback: Boolean? = null
+  @Volatile private var noResponseCallbackSeen: Boolean? = null
 
   private var connectPromise: Promise<HybridBleConnectionSpec>? = null
   private val connectSettled = AtomicBoolean(false)
@@ -68,6 +68,13 @@ class HybridBleConnection(
 
   override val isConnected: Boolean
     get() = connected
+
+  override val noResponseCallback: String
+    get() = when (noResponseCallbackSeen) {
+      true -> "yes"
+      false -> "no"
+      null -> "unknown"
+    }
 
   override val mtu: Double
     get() = if (mtuValue > DEFAULT_MTU) mtuValue.toDouble() else DEFAULT_MTU.toDouble()
@@ -311,17 +318,17 @@ class HybridBleConnection(
           g.writeCharacteristic(c)
         }
       }
-      val status = if (withResponse || noResponseCallback == true) {
+      val status = if (withResponse || noResponseCallbackSeen == true) {
         runOp("write", limit, start = start)
-      } else if (noResponseCallback == false) {
+      } else if (noResponseCallbackSeen == false) {
         runOp("write", limit, waitForCallback = false, start = start)
       } else {
         // First write without response: find out whether Android calls back.
         try {
-          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, probe = true, start = start).also { noResponseCallback = true }
+          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, probe = true, start = start).also { noResponseCallbackSeen = true }
         } catch (e: BleError) {
           if (e.code != "E_TIMEOUT") throw e
-          noResponseCallback = false // accepted by Android, no callback: this phone does not call back
+          noResponseCallbackSeen = false // accepted by Android, no callback: this phone does not call back
           BluetoothGatt.GATT_SUCCESS
         }
       }
