@@ -35,6 +35,7 @@ Read this file before you change the code. It tells you where things are, how th
 | `src/zpl.ts` | `ZplLabel` builder (BPLZ), `zplSettings`, `zplDownloadImage`, `testLabel`. |
 | `src/zplParse.ts` | `parseZpl`, `validateZpl`, `decodeGfaData`: reads ZPL text into drawable elements and issues. Pure TS. Used for previews. Not checked on a printer. |
 | `src/design.ts` | `LabelDesign` (items in mm), `designToZpl`, `checkDesign`, FSSAI veg symbol. The ZPL always comes from the design, never typed by the user. Not checked on a printer. |
+| `src/probe.ts` | `PROBES` (read-only questions to a connected printer), parsers for the configuration report (`^HH`), `~HM` and key-value replies, `settingsFromConfig`. `LabelPrinter.ask(command)` sends one and returns the text. Nothing in it writes. Not checked on the SNBC printer. |
 | `src/cpcl.ts` | `CpclLabel` builder (BPLC), `cpclSettings`. |
 | `src/bpla.ts` | `BplaLabel` builder. Experimental. Origin is bottom-left. |
 | `src/image.ts` | `ditherRgba`, `ditherGray`, `compressBitmap`. Call native code. Async. |

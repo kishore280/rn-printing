@@ -14,6 +14,9 @@ export type {
   DesignIssue,
 } from './design';
 
+export { PROBES, parseConfigReport, parseKeyValues, parseMemory, replyLines, settingsFromConfig, configValue } from './probe';
+export type { Probe, ProbeGroup, ConfigLine, CurrentSettings, MemoryInfo, KeyValue } from './probe';
+
 export { parseZpl, validateZpl, decodeGfaData } from './zplParse';
 export type {
   ZplDocument,

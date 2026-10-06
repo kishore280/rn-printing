@@ -190,6 +190,14 @@ export class LabelPrinter {
     return this.query('~HS', options, parseHostStatus);
   }
 
+  /**
+   * Send a read-only command and return the printer's answer as text, or null when it says nothing within `timeoutMs`.
+   * For commands this library has no parser for (see `PROBES`). Only send commands that read: nothing here checks that.
+   */
+  ask(command: string, options: StatusOptions = {}): Promise<string | null> {
+    return this.query(command, options, (raw) => raw);
+  }
+
   /** Send a query, wait for the reply and parse it. Nothing else is sent in between. */
   private query<T>(command: string, options: StatusOptions, parse: (raw: string) => T | null): Promise<T | null> {
     return this.exclusive(() => this.withLink(async () => {
