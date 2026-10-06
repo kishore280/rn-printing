@@ -61,6 +61,7 @@ Read this file before you change the code. It tells you where things are, how th
 | `docs/TEARDOWN.md` | What we learned from the two vendor APKs and the SDK. |
 | `docs/BLE.md` | BLE guide: setup, API, chunking, errors, troubleshooting, manual acceptance test. |
 | `docs/BPLZ-TEST-LABELS.md` | 22 small test labels and 3 status queries to send with nRF Connect, and a result table. Tests check size and syntax only. |
+| `docs/BPLZ-TEST-SHEET.md` | One test label with 12 numbered cells, sent as 9 writes with nRF Connect. The short way to test the BPLZ commands. Tests check size and syntax only. |
 | `docs/REFERENCES.md` | Verification record. What was checked, what was only compiled, what is unchecked. |
 
 ## Commands
