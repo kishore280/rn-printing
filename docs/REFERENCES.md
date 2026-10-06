@@ -84,6 +84,20 @@ Measured by the owner with the Printer test screen (their report and photos). Mo
 | Small label, QR, barcode, image (10 KB, 716 ms), large image (120,627 B, 495 chunks, 8.4 s, 14.4 KB/s) | OK, and the labels printed right (photos) |
 | 10 labels in a row | The app sent all 10 in 53 ms (107 B each) and said OK. The printer printed only 2 and then showed a red light. **The cause is not known.** The owner suspects the roll ran out after 2 labels (the printer stops with a media-out error and keeps the rest in its memory). That fits better than data loss: 1 KB is small, and 120 KB went through without loss in test 9. To settle it: load a new roll and press feed WITHOUT clearing the printer memory. If labels 3 to 10 then print, the data was never lost. Until then this result counts as "not valid", not as a failure of the transport. |
 
+## nRF Connect log of the same unit (2026-10-06, Android)
+
+Facts from the log. The UUIDs are examples from ONE unit. No code may build them in.
+
+| Item | What the log shows |
+| --- | --- |
+| Device information | Manufacturer `BARROT`, model `BR8051A01`, serial = the Bluetooth address, firmware, hardware and software `1.00`. So the Bluetooth part is a third-party module, not SNBC's own. |
+| Services | Seven. `49535343-fe7d...` (the Microchip-style transparent UART: data in `...8841...` [W, WNR], data out `...1e4d...` [N]; Microchip documents these two roles). Also `...6daa...` [R W WNR] and `...aca3...` [N W] in the same service (not documented in what we found; reading `6daa` gives 0 bytes). Also `0000ff10` (ff11, ff12 [N WNR]), `0000eee0` (eee1 [N W]), `0000eee2` (eee3 [N W]), `0000fee7` (fec7 [W], fec8 [I], fec9 [R]), `0000ff00` (ff02 [W WNR], ff01 [N], ff03 [N]). |
+| What this means | The module has several UART-like paths. Two of them look like a data in / data out pair: the `49535343` service and the `0000ff00` service. We do not know if they reach the same printer UART. Only the `49535343` one is checked: the app printed through it. |
+| Pairing | `createBond()` gives the pairing variant CONSENT (just works, no PIN). The first try was removed by the system after 4 s (bond state NONE, reason REMOVED). The second try bonded in about 5 s (encryption AES, bond state BONDED). So the printer pairs without a PIN, but the user must accept the system dialog quickly. |
+| Idle drop | The first link ended 7.5 minutes after connect with `GATT CONN TIMEOUT` (status 8, the supervision timeout of 5 s). The unit stops answering after some idle time. This fits our design: reconnect when a job starts, no background loop. |
+| Link parameters | The interval changed between 7.5 ms, 30 ms and 11.25 ms after the connect. The supervision timeout stayed at 5 s. |
+| MTU | No MTU request in this log. Without one the limit is 20 bytes per write. |
+
 ## Theory notes (read, not run; written 2026-10-06 while no printer was at hand)
 
 Sources: web search results of Microchip's developer help and Zebra's guides (the pages themselves refused direct fetches: HTTP 406 and 503), so each point is a summary, not a quote.
