@@ -118,7 +118,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 
 - ZPL ASCII compression: `G`-`Y` = 1-19, `g`-`z` = 20-400 in steps of 20, `,` = fill row with 0, `!` = fill row with 1, `:` = repeat previous row. Image command: `^GFA,total,total,bytesPerRow,data`.
 - BPLZ and BPLC use a top-left origin. BPLA uses a bottom-left origin.
-- The unit's real command language is NOT confirmed. The printer self-test prints a COMMAND line that tells which language is active.
+- The command language of the owner's TVS LP 46 Dlite is **BPLZ**, 203 dpi, 864 dots (108 mm) print width (its self-test print, `docs/REFERENCES.md`). Other units can differ: the self-test's COMMAND line tells.
 - Android SDK Classic Bluetooth: SPP UUID `00001101-0000-1000-8000-00805F9B34FB`, secure socket first, then insecure, 1024-byte chunks.
 - BLE has ONE implementation (`BluetoothLETransport`, native). Do not add a second BLE path or a third-party BLE library. NO UUID, name, MAC or PIN is built in, and none may be added to `src/`, `android/` or `ios/`. `BluetoothLETransport` reads the GATT table after the connect and chooses with `selectCharacteristics()`. A caller can pin UUIDs or pass `select()`. UUIDs of one printer may appear only in tests and docs, marked as examples.
 - BLE on one TVS LP 46 Dlite: a user wrote BPLZ by hand to a writable characteristic (nRF Connect) and it printed. Our own code was not run on it.
@@ -144,10 +144,9 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 
 ## Open items
 
-- Get the printer self-test COMMAND line (language).
 - Run the BLE manual acceptance test in `docs/BLE.md` on Android and iOS with the real printer.
 - Compile the Swift files on a Mac (`pod install` and an Xcode build).
-- Confirm label size in mm.
+- Confirm the label size in mm of the owner's media (the self-test says 561 dots long = about 70 mm).
 - Test on a real device and printer: Bluetooth Classic, BLE, TCP.
 - Confirm BPLA units and framing.
 - Add iOS-side tests when a Mac build is available.

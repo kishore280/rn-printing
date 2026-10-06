@@ -52,6 +52,26 @@ Status:
 - A user reported (manual test with nRF Connect and a hand-written BPLZ payload, not run by this package) that one TVS LP 46 Dlite prints over BLE. That is the only hardware evidence.
 - Android: the code expects `onCharacteristicWrite` for "write without response" (reported by the sources above) and has a probe in case a phone does not. Not checked on a device.
 
+## Hardware facts: the printer self-test of one TVS LP 46 Dlite
+
+Source: a photo of the printer's own self-test print, sent by the owner on 2026-10-06. Test data, not code: none of it is built into the package.
+
+| Item | Value on the print |
+| --- | --- |
+| Model, firmware | TVSE LP 46 Dlite, main firmware FV1.050 |
+| Command language | **BPLZ** (confirms the language; the open item "find the COMMAND line" is closed) |
+| Resolution, print width | `864 FULL`; print width 864 dots = 108 mm at 8 dots/mm = **203 dpi** |
+| Label length (calibrated) | 561 dots = about 70 mm. Maximum length 43 in / 1100 mm |
+| Media, method | GAP/NOTCH media, WEB sensor (manual select), thermal transfer, tear-off, darkness 15, 5.1 IPS |
+| Serial port | 115200 baud, 8 bits, no parity, host handshake DTR/DSR |
+| Bluetooth | name `TVSE LP 46 Dlite_4152`, address 28:D4:1E:5B:75:D3, Bluetooth version `B_KR_250210_r4686` |
+| Network | IP 0.0.0.0, raw port 9100 set, but this unit has no network port in use |
+
+What follows from it (reasoning, NOT measured):
+- The default label of the billing app (50 x 30 mm) is not this media: set the real width and a height of about 70 mm, or the print is cut or off the label.
+- If the Bluetooth module passes bytes to the printer over a 115200-baud serial line, the sustained speed cannot be more than about 11 KB/s, and a 100 KB job needs at least 9 s.
+  Write without response with 182-byte pieces every 10 ms is about 18 KB/s, which is more than that. Whether the module buffers or flow-controls is unknown. The hardware test (pieces, delay 0, 10, 20, 30 ms) must show it.
+
 ## Compiled, not run
 
 - **C++:** `HybridBplzCodec` and the core compile against the real Nitro and JSI headers (`g++ -std=c++20 -fsyntax-only`).
