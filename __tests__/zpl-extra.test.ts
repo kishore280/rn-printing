@@ -52,6 +52,10 @@ describe('zplSettings from the Zebra guide', () => {
     expect(() => zplSettings.speed(1)).toThrow(RangeError);
     expect(() => zplSettings.speed(15)).toThrow(RangeError);
   });
+  it('save and recall use ^JU', () => {
+    expect(zplSettings.saveSettings()).toBe('^XA^JUS^XZ');
+    expect(zplSettings.recallSettings()).toBe('^XA^JUR^XZ');
+  });
   it('the configuration label is ~WC', () => {
     expect(zplSettings.configLabel()).toBe('~WC');
   });

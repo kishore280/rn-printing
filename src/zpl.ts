@@ -375,6 +375,17 @@ export const zplSettings = {
     }
     return `~TA${dots < 0 ? '-' : '+'}${String(Math.abs(dots)).padStart(3, '0')}`;
   },
+  /**
+   * ^JUS: save the current settings, so they stay after the printer is switched off. Without it, ~SD, ^MD, ^PR, ^MM, ^MN and ^MT last
+   * until power off, and a restart brings back the saved ones. Source: Zebra ZPL II guide, ^JU. NOT checked on the SNBC printer.
+   */
+  saveSettings(): string {
+    return '^XA^JUS^XZ';
+  },
+  /** ^JUR: bring back the saved settings (undo what was tried). Source: Zebra ZPL II guide, ^JU. NOT checked on the SNBC printer. */
+  recallSettings(): string {
+    return '^XA^JUR^XZ';
+  },
   /** ~WC: print the printer's configuration label. Only works when the printer is idle. Source: Zebra ZPL II guide, ~WC. */
   configLabel(): string {
     return '~WC';
