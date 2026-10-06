@@ -83,6 +83,27 @@ Measured by the owner with the Printer test screen (their report and photos). Mo
 | Small label, QR, barcode, image (10 KB, 716 ms), large image (120,627 B, 495 chunks, 8.4 s, 14.4 KB/s) | OK, and the labels printed right (photos) |
 | 10 labels in a row | The app sent all 10 in 53 ms (107 B each) and said OK. The printer printed only 2 and then showed a red light. **The cause is not known.** The owner suspects the roll ran out after 2 labels (the printer stops with a media-out error and keeps the rest in its memory). That fits better than data loss: 1 KB is small, and 120 KB went through without loss in test 9. To settle it: load a new roll and press feed WITHOUT clearing the printer memory. If labels 3 to 10 then print, the data was never lost. Until then this result counts as "not valid", not as a failure of the transport. |
 
+## Theory notes (read, not run; written 2026-10-06 while no printer was at hand)
+
+Sources: web search results of Microchip's developer help and Zebra's guides (the pages themselves refused direct fetches: HTTP 406 and 503), so each point is a summary, not a quote.
+
+- **The Bluetooth chip is a Microchip BM70 / RN4870 style module.** Service `49535343-FE7D-4AE5-8FA9-9FAFD205E455` is the Microchip *Transparent UART* service:
+  RX `49535343-8841-43F4-A8D4-ECBE34729BB3` (write, write without response) takes the data; TX `49535343-1E4D-4BD9-BA61-23C647249616` (notify) sends data back
+  ([Transparent UART service for BM70/RN4870](https://developerhelp.microchip.com/xwiki/bin/view/applications/ble/android-development-for-bm70rn4870/transparent-uart-service-for-bm70rn4870/)).
+  The characteristics `49535343-6daa-...` (read, write, write without response) and `49535343-aca3-...` (write, notify) of the same service are NOT in Microchip's documentation (they look like legacy ISSC extras).
+  The run on 2026-10-06 used `6daa` and printed; the data input in the documentation is `8841`. The selection rule now prefers a characteristic that cannot be read, which picks `8841`.
+  (The rule has no UUID. The UUIDs are written here only to explain one observed table.)
+- **Flow control.** Microchip says that when the Transparent UART streams data, the host should use the RTS/CTS lines with hardware flow control on, because without it the host can overflow the module's UART buffer
+  ([Hardware Flow Control](https://onlinedocs.microchip.com/oxy/GUID-1B991CE9-4FE3-48B8-BC90-28F5F29AD994-en-US-1/GUID-944493A1-7DFF-49C0-B571-DF26D971A2E0.html)).
+  Whether this printer wires RTS/CTS between the module and its board is unknown. The run showed no loss at 14.4 KB/s (120 KB), so the margin is not known; the delay test (0, 10, 20, 30 ms) measures it.
+  Write without response has no acknowledgement from the module, so a bigger delay or `writeMode: 'write'` is the way to slow down.
+- **Out of media.** Zebra's printers show a red status light for a media-out condition (the label roll is empty or the sensor cannot find the label); you load labels, close the printer and press Feed to resume
+  ([detecting a media-out condition](https://docs.zebra.com/us/en/printers/desktop/zd888da-zd230da/detecting-a-media-out-condition.html)).
+  This fits the red light after "2 of 10 labels". The ZPL buffer is cleared by `~JA` and `~JR` (Zebra ZPL II guide, via search results).
+- **Size from the printer.** `~HI` returns model, firmware, dots per millimetre and memory; `~HS` returns the label length in dots. Neither gives the print WIDTH
+  (this printer's self-test shows 864 dots; no standard ZPL query gives it). Both are Zebra commands; an SNBC printer may answer in another shape or not at all.
+- **What the app's test screen does with it.** Before each print test it asks the printer for its status and does not start when the printer reports a problem. A second after the test it asks again and writes both answers into the report, so "the phone sent it" can be told from "the printer printed it".
+
 ## Compiled, not run
 
 - **C++:** `HybridBplzCodec` and the core compile against the real Nitro and JSI headers (`g++ -std=c++20 -fsyntax-only`).

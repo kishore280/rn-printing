@@ -149,3 +149,17 @@ describe('LabelPrinter control commands', () => {
     expect(t.writtenText()).toBe('~JA|~PS|~JR|~JC');
   });
 });
+
+
+describe('LabelPrinter.getIdentification', () => {
+  it('sends ~HI and parses the reply', async () => {
+    const t = new FakeTransport();
+    t.replies = [new Uint8Array(0), Uint8Array.from(Buffer.from('\x02TVSE LP 46 Dlite,FV1.050,8,32768KB\x03\r\n', 'latin1'))];
+    const id = await new LabelPrinter(t).getIdentification();
+    expect(t.writtenText()).toBe('~HI');
+    expect(id).toMatchObject({ model: 'TVSE LP 46 Dlite', firmware: 'FV1.050', dotsPerMm: 8 });
+  });
+  it('gives null when the printer does not answer', async () => {
+    expect(await new LabelPrinter(new FakeTransport()).getIdentification()).toBeNull();
+  });
+});

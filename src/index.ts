@@ -24,8 +24,8 @@ export { BplaLabel } from './bpla';
 export type { BplaTextOptions, BplaBarcodeOptions, BplaRotation } from './bpla';
 
 
-export { parseHostStatus, parseExtendedStatus } from './status';
-export type { PrinterStatus, ExtendedStatus } from './status';
+export { parseHostStatus, parseExtendedStatus, parseHostIdentification } from './status';
+export type { PrinterStatus, ExtendedStatus, PrinterIdentity } from './status';
 
 export type { Transport, ReadOptions } from './transport';
 export { BluetoothClassic, BluetoothClassicTransport } from './transports/bluetoothClassic';

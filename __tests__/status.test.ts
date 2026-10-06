@@ -1,4 +1,4 @@
-import { parseHostStatus } from '../src/status';
+import { parseHostIdentification, parseHostStatus } from '../src/status';
 
 const frame = (s: string) => `\x02${s}\x03\r\n`;
 
@@ -28,5 +28,23 @@ describe('parseHostStatus', () => {
   it('returns null for other text', () => {
     expect(parseHostStatus('')).toBeNull();
     expect(parseHostStatus('hello')).toBeNull();
+  });
+});
+
+
+describe('parseHostIdentification (~HI)', () => {
+  it('reads model, firmware, dots per mm and memory', () => {
+    const id = parseHostIdentification('\x02ZT230-203dpi,V53.17.7Z,8,8192KB\x03\r\n');
+    expect(id).toMatchObject({ model: 'ZT230-203dpi', firmware: 'V53.17.7Z', dotsPerMm: 8, memory: '8192KB' });
+  });
+  it('reads 300 dpi, and a reply with no number', () => {
+    expect(parseHostIdentification('\x02TVSE LP 46 Dlite,FV1.050,12\x03')?.dotsPerMm).toBe(12);
+    expect(parseHostIdentification('A,B,x')?.dotsPerMm).toBeNull();
+    expect(parseHostIdentification('A,B')).toMatchObject({ model: 'A', firmware: 'B', dotsPerMm: null, memory: '' });
+  });
+  it('returns null for other text', () => {
+    expect(parseHostIdentification('')).toBeNull();
+    expect(parseHostIdentification('hello')).toBeNull();
+    expect(parseHostIdentification(',,8')).toBeNull();
   });
 });

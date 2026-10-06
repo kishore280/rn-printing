@@ -9,7 +9,7 @@ import {
   ResolvedReconnect,
 } from './reconnect';
 import { zplSettings } from './zpl';
-import { ExtendedStatus, parseExtendedStatus, parseHostStatus, PrinterStatus } from './status';
+import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
 import type { Transport } from './transport';
 
 /** Any label builder: ZplLabel, CpclLabel or BplaLabel. */
@@ -199,6 +199,14 @@ export class LabelPrinter {
       const bytes = await this.transport.read({ timeoutMs: options.timeoutMs ?? 1500, idleMs: 150 });
       return bytes.length === 0 ? null : parse(latin1Decode(bytes));
     }, true));
+  }
+
+  /**
+   * Ask who the printer is (~HI): model, firmware and the dots per millimetre (its resolution). Returns null when it gives no reply
+   * or a reply of another shape. The label length (not the width) is in the status: `getStatus().labelLengthDots`.
+   */
+  getIdentification(options: StatusOptions = {}): Promise<PrinterIdentity | null> {
+    return this.query('~HI', options, parseHostIdentification);
   }
 
   /** Ask for the error and warning flags (~HQES, BPLZ only). Returns null when there is no readable reply. */
