@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: TypeScript, tests, build, nitrogen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Generated files must be up to date
+        run: |
+          npx nitrogen
+          git diff --exit-code -- nitrogen || {
+            echo "nitrogen/generated is stale. Run 'npx nitrogen' and commit the result."; exit 1; }
+
+  cpp:
+    name: C++ core and Nitro syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash scripts/check-cpp.sh
+
+  kotlin:
+    name: Kotlin compile check (Android API)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: .cache/kotlin-check
+          key: kotlin-check-${{ hashFiles('scripts/check-kotlin.sh', 'package-lock.json') }}
+      - run: bash scripts/check-kotlin.sh

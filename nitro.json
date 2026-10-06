@@ -1,0 +1,26 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": ["bplzlabel"],
+  "ios": {
+    "iosModuleName": "NitroBplzLabel"
+  },
+  "android": {
+    "androidNamespace": ["bplzlabel"],
+    "androidCxxLibName": "NitroBplzLabel"
+  },
+  "autolinking": {
+    "BplzCodec": {
+      "all": {
+        "language": "c++",
+        "implementationClassName": "HybridBplzCodec"
+      }
+    },
+    "ClassicBluetooth": {
+      "android": {
+        "language": "kotlin",
+        "implementationClassName": "HybridClassicBluetooth"
+      }
+    }
+  },
+  "ignorePaths": ["**/node_modules", "example", "lib"]
+}

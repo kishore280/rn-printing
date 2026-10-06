@@ -1,0 +1,152 @@
+# AGENTS.md
+
+Read this file before you change the code. It tells you where things are, how they work, and what rules to keep.
+
+## What this package is
+
+`react-native-bplz-label-printer` prints labels from React Native to SNBC-family label printers
+(TVS LP 46 D Lite = SNBC BTP-4200E; 203 dpi; 108 mm maximum width).
+
+- Command languages: BPLZ (ZPL II), BPLC (CPCL), BPLA (experimental).
+- Transports: Bluetooth Classic (Android only), BLE (Android + iOS), TCP port 9100 (Android + iOS).
+- iOS has NO Bluetooth Classic. Apple allows it only with MFi hardware. iOS uses BLE or TCP.
+- Built on Nitro Modules (`react-native-nitro-modules`). Fast native code. No bridge JSON.
+
+## Design rules (do not break)
+
+1. **No JavaScript fallback for native code.** The C++ codec is the only implementation of
+   dither, ZPL compression and base64. If the native module is missing, throw `NativeModuleMissingError`.
+2. **`test/reference/` is an oracle only.** It is the slow TypeScript copy that tests compare against.
+   Never import it from `src/`. Never ship it.
+3. **Never edit `nitrogen/generated/` by hand.** Change a spec, then run `npx nitrogen`. Commit the result.
+   CI fails if the generated files are stale.
+4. **Specs live in `src/specs/`.** One Kotlin type per file. Keep spec types simple.
+5. **Do not hand-roll protocol details.** Use a source: the Zebra ZPL II guide, the SNBC SDK
+   (see `docs/TEARDOWN.md`), Labelary, or the Nitro docs. Write the source in `docs/REFERENCES.md`.
+6. **Do not claim unverified behavior.** If you did not test it on a printer, say so in the doc
+   comment and in `docs/REFERENCES.md`.
+7. Keep TypeScript strict. No `any` without a comment that says why.
+
+## Layout
+
+| Path | What is there |
+| --- | --- |
+| `src/index.ts` | Public exports. Add new public API here. |
+| `src/zpl.ts` | `ZplLabel` builder (BPLZ), `zplSettings`, `zplDownloadImage`, `testLabel`. |
+| `src/cpcl.ts` | `CpclLabel` builder (BPLC), `cpclSettings`. |
+| `src/bpla.ts` | `BplaLabel` builder. Experimental. Origin is bottom-left. |
+| `src/image.ts` | `ditherRgba`, `ditherGray`, `compressBitmap`. Call native code. Async. |
+| `src/bitmap.ts` | Types: `Bitmap1bpp`, `DitherMethod`, `DitherOptions`. |
+| `src/printer.ts` | `LabelPrinter`: queue (mutex), `print`, `printAll`, status. |
+| `src/reconnect.ts` | cockatiel retry policy, transient-error rule, `ReconnectOptions`, `ConnectionEvent`. Used by `LabelPrinter`. |
+| `src/status.ts` | Parsers for `~HS` and `~HQES` replies. |
+| `src/transport.ts` | `Transport` interface. |
+| `src/transports/` | `bluetoothClassic.ts` (Nitro), `ble.ts` (+ `blePlxClient` adapter), `tcp.ts`, `inbox.ts`. |
+| `src/native.ts` | Lazy loading of Nitro objects. `setNativeCodec` / `setClassicBluetooth` for tests. |
+| `src/encoding.ts` | base64, UTF-8, Latin-1 helpers. |
+| `src/errors.ts` | Error classes. |
+| `src/specs/*.nitro.ts` | Nitro specs. The source of truth for native APIs. |
+| `cpp/bplz_core.{hpp,cpp}` | Portable C++17 core: gray, dither, ZPL compress, base64. No Nitro/JSI includes. |
+| `cpp/HybridBplzCodec.{hpp,cpp}` | Nitro HybridObject. Validates input, copies the buffer, runs async. |
+| `android/` | Gradle, CMake, Kotlin HybridObjects (`HybridClassicBluetooth`, `HybridClassicConnection`). |
+| `ios/`, `NitroBplzLabel.podspec` | iOS build setup. No Swift code yet. The C++ codec is shared. |
+| `nitro.json` | Autolinking map. Add every new HybridObject here. |
+| `nitrogen/generated/` | Generated. Ships in the npm package. |
+| `__tests__/` | Jest tests. |
+| `test/reference/`, `test/mocks/` | Oracles and mocks for tests. |
+| `test-native/` | C++ CLI and bench used by the parity test. |
+| `scripts/check-cpp.sh` | C++ syntax check against Nitro and JSI headers + warning-free core build. |
+| `scripts/check-kotlin.sh` | Downloads kotlinc and Android jars into `.cache/`, compiles the Kotlin code. |
+| `docs/TEARDOWN.md` | What we learned from the two vendor APKs and the SDK. |
+| `docs/REFERENCES.md` | Verification record. What was checked, what was only compiled, what is unchecked. |
+
+## Commands
+
+```sh
+npm ci
+npm run typecheck        # tsc --noEmit
+npm test                 # jest (includes C++ parity test; needs g++)
+npm run build            # tsc -p tsconfig.build.json -> lib/
+npx nitrogen             # regenerate nitrogen/generated after a spec change
+bash scripts/check-cpp.sh
+bash scripts/check-kotlin.sh   # first run downloads ~200 MB into .cache/
+npm run bench            # Node V8 only; does not show Hermes or phone speed
+```
+
+CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you open a PR.
+
+## How to do common changes
+
+**Add a label feature (ZPL/CPCL/BPLA):**
+1. Add the method to the builder in `src/zpl.ts` (or `cpcl.ts`, `bpla.ts`). Validate every number with `int()` from `src/validate.ts`.
+2. Add a test in `__tests__/`. Check the exact command text.
+3. For ZPL, you can render it on Labelary (see below) and compare with what you expect.
+4. Note the source in `docs/REFERENCES.md`.
+
+**Change the C++ core:**
+1. Edit `cpp/bplz_core.cpp`. Keep it free of Nitro/JSI includes.
+2. Update the matching oracle in `test/reference/` only if the rule itself changed (and cite a source).
+3. Run `npm test` (parity test compares C++ with the oracle) and `bash scripts/check-cpp.sh`.
+
+**Add a native function or object:**
+1. Add or edit a `src/specs/X.nitro.ts` spec.
+2. Run `npx nitrogen`. Commit `nitrogen/`.
+3. Add the implementation class (`cpp/` or `android/.../kotlin`). Register it in `nitro.json` under `autolinking`.
+4. For C++, add the new `.cpp` to `android/CMakeLists.txt` and to the podspec sources if needed.
+5. Add a getter in `src/native.ts` and a setter for tests.
+6. Run `check-cpp.sh` / `check-kotlin.sh`.
+
+**Add a transport:**
+1. Implement the `Transport` interface in `src/transports/`. Chunk writes. Respect the write timeout.
+2. Export it from `src/index.ts`.
+3. Test it with a fake (see `__tests__/transports.test.ts`).
+
+## Reconnect rules (do not break)
+
+- `LabelPrinter.withLink` owns reconnect. Transports stay simple: `connect`, `write`, `read`, `disconnect`.
+- Never resend a job after a failed write unless the user set `resendAfterPartialWrite`. A resend can print twice.
+- A transport must throw `TransportError` with a `code`. Codes in `TRANSIENT` (`src/reconnect.ts`) are retried. Give an error that the user must fix its own code, so it is not retried.
+- Android messages from Kotlin are mapped to codes in `classify()` in `src/transports/bluetoothClassic.ts`. If you change a Kotlin error message, change `classify()` too.
+- ONE retry layer: `LabelPrinter` + `src/reconnect.ts`, built on `cockatiel` (RetryPolicy, ExponentialBackoff, decorrelated jitter). Do not add retry inside a transport or add a second retry library. Do not hand-roll backoff.
+- cockatiel `maxAttempts` counts retries, ours counts the first try too (`maxAttempts - 1`).
+- Delay defaults (300 ms, x2, cap 2 s) are our choice and are not tested on the printer.
+- No background reconnect loop. Reconnect runs when a job starts.
+
+## Facts you need
+
+- ZPL ASCII compression: `G`-`Y` = 1-19, `g`-`z` = 20-400 in steps of 20, `,` = fill row with 0, `!` = fill row with 1, `:` = repeat previous row. Image command: `^GFA,total,total,bytesPerRow,data`.
+- BPLZ and BPLC use a top-left origin. BPLA uses a bottom-left origin.
+- The unit's real command language is NOT confirmed. The printer self-test prints a COMMAND line that tells which language is active.
+- Android SDK Classic Bluetooth: SPP UUID `00001101-0000-1000-8000-00805F9B34FB`, secure socket first, then insecure, 1024-byte chunks.
+- The printer's BLE GATT UUIDs are unknown. Callers must pass them to `BleTransport`.
+- Labelary quirk: a `^PW` narrower than the label centers the print area. Remove `^PW`/`^LL` when you compare pixels.
+
+## Verification status
+
+| Area | Status |
+| --- | --- |
+| ZPL compression | Checked against Labelary (pixel exact) and the Zebra guide. |
+| Threshold dither | Checked against Pillow. |
+| Bayer 8x8 matrix | Checked against the recursive definition. |
+| C++ vs TS reference | Differential tests in `__tests__/native-parity.test.ts`. |
+| C++ vs Nitro/JSI headers | Syntax check only. Not run in a real app. |
+| Kotlin | Compiled with kotlinc against Android API jar. Not run on a device. |
+| BLE adapter | Type-checked against `react-native-ble-plx` 3.5.1. Not run. |
+| Gradle, CMake, Xcode builds | NOT run. |
+| BPLA record layout | NOT tested on a printer. |
+| `~HS` / `~HQES` replies | NOT verified on the printer. |
+| Hermes / phone speed | NOT measured. |
+
+## Open items
+
+- Get the printer self-test COMMAND line (language).
+- Scan the printer with nRF Connect to find BLE service and characteristic UUIDs.
+- Confirm label size in mm.
+- Test on a real device and printer: Bluetooth Classic, BLE, TCP.
+- Confirm BPLA units and framing.
+- Add iOS-side tests when a Mac build is available.
+
+## Style
+
+- Doc comments and README use ASD-STE100 Simplified Technical English: short, active sentences.
+- Commit messages: imperative, short.

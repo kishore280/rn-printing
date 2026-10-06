@@ -1,0 +1,81 @@
+{
+  "name": "react-native-bplz-label-printer",
+  "version": "0.1.0",
+  "description": "Print ZPL (BPLZ) labels from React Native. Bluetooth Classic (SPP) on Android, TCP on Android and iOS. Built for SNBC-made label printers such as the TVS LP 46 Dlite.",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "files": [
+    "src",
+    "lib",
+    "nitrogen",
+    "cpp",
+    "ios",
+    "android/build.gradle",
+    "android/gradle.properties",
+    "android/fix-prefab.gradle",
+    "android/CMakeLists.txt",
+    "android/src",
+    "react-native.config.js",
+    "nitro.json",
+    "NitroBplzLabel.podspec",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "specs": "tsc --noEmit false --outDir lib && nitrogen",
+    "bench": "node bench/bench.js"
+  },
+  "keywords": [
+    "react-native",
+    "nitro",
+    "label-printer",
+    "zpl",
+    "cpcl",
+    "snbc",
+    "tvs",
+    "bluetooth",
+    "ble"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "react": ">=18",
+    "react-native": ">=0.78",
+    "react-native-nitro-modules": ">=0.37.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "jest": "^29.7.0",
+    "nitrogen": "^0.37.1",
+    "react": "^19.3.0",
+    "react-native": "^0.87.1",
+    "react-native-ble-plx": "^3.5.1",
+    "react-native-nitro-modules": "^0.37.1",
+    "ts-jest": "^29.1.2",
+    "typescript": "^5.4.5"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.ts"
+    ],
+    "moduleNameMapper": {
+      "^react-native$": "<rootDir>/test/mocks/react-native.ts"
+    },
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/lib/"
+    ]
+  },
+  "peerDependenciesMeta": {},
+  "dependencies": {
+    "cockatiel": "^3.2.1"
+  }
+}
