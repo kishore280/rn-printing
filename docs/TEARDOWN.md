@@ -36,6 +36,53 @@ Source: SNBC Android label SDK V2.4.2.1 (docs, demo source, demo APK) and the BY
 - `~HS` (host status) is not tested on the user's printer.
 - `^CI28` selects UTF-8.
 
+## 4a. Full BPLZ command list in the SDK native library (V2.4.2.1)
+
+Source: `strings` on `libLabelPrinterSDK.so` (arm64-v8a, same in the other ABIs) and the SDK C and Java API guides.
+The SDK was read, not run. No command here is checked on a printer.
+
+Label content (format strings, `%` = a value the SDK fills in):
+
+| Command | SDK format string |
+| --- | --- |
+| Text | `^A@<font>,<h>,<w>,<name>^FO<x>,<y>^FH_^FD<text>^FS` (reverse: add `^FR` before `^FD`) |
+| Code page | `^CI<n>`. The SDK knows 0, 13, 27 to 31, 33 to 36. UTF-8 = 28. |
+| Code 128 | `^FO..^BY<module>,<ratio>^BC<rot>,<h>,<hri>,<above>^FH_^FD..` |
+| Other 1D | `^B2` (ITF), `^B3` (Code 39), `^B8` (EAN-8), `^B9` (UPC-E), `^BA` (Code 93), `^BE` (EAN-13), `^BK` (Codabar), `^BU` (UPC-A) |
+| QR | `^FO..^BQ<rot>,<model>,<cell>^FH_^FD<ecc>A,<data>` |
+| Data Matrix | `^FO..^BX<rot>,<cell>,200,...` |
+| PDF417 | `^FO..^BY<module>^B7<rot>,<h>,<sec>,<cols>,<rows>,N^FH_^FD..` |
+| MaxiCode-like `^BD` | `^FO..^BD<mode>,1,1^FH_^FD..` (seen in strings; not in the API guide) |
+| Box | `^FO..^GB<w>,<h>,<t>,B,0^FS` or `^GB<w>,<h>,<t>^FS` |
+| Diagonal | `^FO..^GD<w>,<h>,<t>,B,<dir>^FS` |
+| Ellipse | `^FO..^GE<w>,<h>,<t>,B^FS` |
+| Bitmap | `^FO..^GFA,<total>,<total>,<bytesPerRow>,<data>` |
+| Stored image | `^FO..^IM<name>^FS`, `^FO..^XG<name>,1,1^FS` |
+| Field number | `^FN<n>^FD` |
+
+Page and printer setup: `^XA^PW<w>^LL<h>`, `^LH`, `^LS`, `^LT`, `^MM`, `^MT`, `^PO`, `^PR`, `^ST`, `^PQ<n>,,<copies>`, `^XZ`.
+Storage: `~DG`, `~DY` (B/X and b/T variants). Control: `~HS`, `~HQES`, `~HL`, `~JA`, `~JC`, `~JR`, `~PH`, `~PP`, `~PS`, `~SD`, `~TA`, `~WC`.
+Other: `^RF*`, `^RL*`, `^RR`, `^RS`, `^RW`, `^WV` (RFID), `^HF ^HR ^HW ^ID ^CN ^JB ^JS ^JU ^MN ^XF` (storage and host).
+Also seen: `~WN00@eep,r,...` and `~WN00@ini,r,...` (SNBC private commands that read printer settings).
+
+Value ranges from the C API guide (BPLZ column):
+
+- Coordinates and sizes: 0 to 32000 dots. Label width 2 to 32000, height 1 to 32000.
+- Font name: `A` to `Z` or `0` to `9`. Font width and height: 0 to 32000 dots. Style 1 = reverse.
+- 1D barcode: height 1 to 32000. HRI 0 = none, 1 = below, 4 = above. Module width 1 to 10 (default 2). Wide/narrow ratio 2.0 to 3.0 (default 3.0). The ratio has no effect on Code 128, Code 93, EAN and UPC.
+- QR: cell 1 to 10. ECC `H`, `Q`, `M` (default), `L`. Model 1 or 2 (default 2).
+- PDF417: security 0 to 8, module width 1 to 10, module height 1 to 32000, rows 3 to 90, columns 1 to 30.
+- Line and box thickness: 1 to 32000 (default 1). Box width and height: at least the thickness.
+- Code page: 0 = U.S.A. 1, 24 = single-byte Asian, 28 = UTF-8, 29 = UTF-16 BE, 30 = UTF-16 LE.
+- Print speed: 2 to 14 inch/s (varies by model). Label offset: -9999 to 9999 (X) and -240 to 240. `SetTearOffset` and label offset work in BPLZ only.
+- Coordinates in BPLZ and BPLC give the top-left corner.
+
+What this means for a preview or validator:
+
+- The SDK sends about 25 label commands. A renderer for those covers what the vendor itself uses.
+- The SDK does not use `^CF`, `^FB`, `^FW`, `^FT`, `^GFB`, `^A0` or `^FR` together with `^FO` for most text. It uses `^A@` for text. Our own builder uses `^A0`. The printer prints `^A0` (hardware test), so both work.
+- `docs/` has no SNBC list of supported commands. The SDK shows only what SNBC sends. It does not show what the printer rejects.
+
 ## 4b. BPLC and BPLA command strings (from the native library)
 
 - BPLC is CPCL: `! offset hdpi vdpi height qty`, `PW`, `TEXT/TEXT90/TEXT180/TEXT270 font size x y data`, `SCALE-TEXT`, `BARCODE/VBARCODE type width ratio height x y data`, `BOX`, `LINE`, `CG` (bitmap), `PCX`, `VB PDF-417`, `VB QR x y M n U n` then `MA,data`, `PRINT`.
