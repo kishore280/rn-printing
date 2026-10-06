@@ -192,13 +192,22 @@ class HybridBleConnection(
     timeoutMs: Long,
     retryRefusal: Boolean = true,
     waitForCallback: Boolean = true,
-    oweOnTimeout: Boolean = true,
+    probe: Boolean = false,
     start: () -> Boolean,
   ): Int {
     synchronized(opLock) {
       val deadline = System.currentTimeMillis() + timeoutMs
       while (true) {
         if (!connected) throw BleError("E_DISCONNECTED", "The device is not connected ($what)")
+        if (!waitForCallback) {
+          // No callback is expected, so there is no operation to guard. Android's "busy" answer is the flow control.
+          if (start()) return BluetoothGatt.GATT_SUCCESS
+          if (!retryRefusal || System.currentTimeMillis() >= deadline) {
+            throw BleError("E_WRITE", "Android refused to start $what (busy or the link is closing)")
+          }
+          Thread.sleep(RETRY_MS)
+          continue
+        }
         val op = try {
           guard.begin() // this operation is now the only one that a callback can complete
         } catch (e: IllegalStateException) {
@@ -208,13 +217,12 @@ class HybridBleConnection(
         try {
           if (start()) {
             accepted = true
-            if (!waitForCallback) return BluetoothGatt.GATT_SUCCESS
             val left = deadline - System.currentTimeMillis()
             val status = try {
               op.future.get(maxOf(left, 1L), TimeUnit.MILLISECONDS)
             } catch (_: TimeoutException) {
               // Give up this operation BEFORE anything else runs. Its callback may still come. The guard drops it.
-              guard.abandon(op, accepted = true, owe = oweOnTimeout)
+              if (probe) guard.abandonTentative(op) else guard.abandon(op, accepted = true)
               throw BleError("E_TIMEOUT", "$what timed out after $timeoutMs ms")
             }
             if (status == DISCONNECTED) throw BleError("E_DISCONNECTED", "The device disconnected during $what")
@@ -310,7 +318,7 @@ class HybridBleConnection(
       } else {
         // First write without response: find out whether Android calls back.
         try {
-          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, oweOnTimeout = false, start = start).also { noResponseCallback = true }
+          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, probe = true, start = start).also { noResponseCallback = true }
         } catch (e: BleError) {
           if (e.code != "E_TIMEOUT") throw e
           noResponseCallback = false // accepted by Android, no callback: this phone does not call back

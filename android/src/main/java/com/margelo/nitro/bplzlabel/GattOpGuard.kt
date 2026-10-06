@@ -1,6 +1,9 @@
 package com.margelo.nitro.bplzlabel
 
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Tells which GATT operation a callback belongs to. No Android classes are used here, so the rules can be tested on a JVM.
@@ -9,21 +12,38 @@ import java.util.concurrent.CompletableFuture
  * - `active`: the one operation that waits for a callback now. Each operation has its own token (`Op`).
  * - `owed`: how many callbacks are still to come from operations that were given up (timeout, cancel) after Android
  *   accepted them. Android answers in order, so these callbacks come first. They are dropped and never reach a newer operation.
+ * - `tentativeUntil`: set when the first write without response (the probe) timed out. A callback may still come, or the phone
+ *   may never call back. Until it comes or `tentativeWindowMs` pass, the next callback is dropped, and `begin()` waits.
+ *   So a late probe callback can never complete a later operation, and a phone that never calls back loses nothing
+ *   except a short wait for an operation that needs a callback.
  * After `abort` (disconnect) the guard is closed: every callback is dropped.
  */
-internal class GattOpGuard {
+internal class GattOpGuard(private val tentativeWindowMs: Long = 2000L) {
   class Op(val id: Long) {
     val future = CompletableFuture<Int>()
   }
 
-  private val lock = Any()
+  private val lock = ReentrantLock()
+  private val settled = lock.newCondition()
   private var next = 0L
   private var active: Op? = null
   private var owed = 0
   private var closed = false
+  private var tentativeUntil = 0L // System.nanoTime() value, 0 = none
 
-  /** Start an operation and make it the active one. Fails when another one is active or the guard is closed. */
-  fun begin(): Op = synchronized(lock) {
+  private fun tentative(): Boolean = tentativeUntil != 0L && System.nanoTime() - tentativeUntil < 0
+
+  private fun clearTentative() {
+    tentativeUntil = 0L
+    settled.signalAll()
+  }
+
+  /**
+   * Start an operation and make it the active one. Fails when another one is active or the guard is closed.
+   * While a probe callback is still possible, it waits (at most `tentativeWindowMs`) until that callback came or the window ended.
+   */
+  fun begin(): Op = lock.withLock {
+    while (!closed && tentative()) settled.awaitNanos(maxOf(tentativeUntil - System.nanoTime(), 1L))
     check(!closed) { "The GATT link is closed" }
     check(active == null) { "A GATT operation is already active" }
     Op(++next).also { active = it }
@@ -31,8 +51,12 @@ internal class GattOpGuard {
 
   /** A callback arrived. Returns true only when it completed the active operation. */
   fun complete(status: Int): Boolean {
-    val op = synchronized(lock) {
+    val op = lock.withLock {
       if (closed) return false
+      if (tentative()) { // the late callback of the probe: the oldest one, so it comes first
+        clearTentative()
+        return false
+      }
       if (owed > 0) { // it belongs to an operation that was given up
         owed--
         return false
@@ -48,23 +72,32 @@ internal class GattOpGuard {
   /**
    * Give up `op` (timeout, cancel, refused start or failure). It stops being active at once.
    * When Android had accepted it (`accepted`), its callback may still come, and it is dropped when it does.
-   * Pass `owe = false` when no callback is expected (a phone that never calls back).
    */
-  fun abandon(op: Op, accepted: Boolean, owe: Boolean = true) = synchronized(lock) {
+  fun abandon(op: Op, accepted: Boolean) = lock.withLock {
     if (active === op) active = null
-    if (accepted && owe && !closed) owed++
+    if (accepted && !closed) owed++
+  }
+
+  /**
+   * Give up the probe (the first write without response) after a timeout. Android accepted it. A callback may come later, or never.
+   * It is dropped when it comes within the window. Nothing is owed after the window.
+   */
+  fun abandonTentative(op: Op) = lock.withLock {
+    if (active === op) active = null
+    if (!closed) tentativeUntil = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(tentativeWindowMs)
   }
 
   /** The operation is done. Make sure it is not active any more. */
-  fun finish(op: Op) = synchronized(lock) {
+  fun finish(op: Op) = lock.withLock {
     if (active === op) active = null
   }
 
   /** The link is gone (disconnect). Fail the active operation with `status` and drop every later callback. */
   fun abort(status: Int) {
-    val op = synchronized(lock) {
+    val op = lock.withLock {
       closed = true
       owed = 0
+      clearTentative()
       active.also { active = null }
     }
     op?.future?.complete(status)

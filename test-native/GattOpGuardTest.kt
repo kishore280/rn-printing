@@ -88,11 +88,6 @@ private fun testMore() {
   val d = h.begin()
   check("more: a refused operation owes no callback", h.complete(0) && value(d) == 0)
 
-  // A phone that never calls back (probe): no callback is owed.
-  val k = GattOpGuard()
-  k.abandon(k.begin(), accepted = true, owe = false)
-  val e = k.begin()
-  check("more: owe=false owes nothing", k.complete(0) && value(e) == 0)
 
   // Only one operation can be active.
   val m = GattOpGuard()
@@ -105,7 +100,50 @@ private fun testMore() {
   check("more: stray callback ignored", !GattOpGuard().complete(0))
 }
 
+private fun testProbe() {
+  // probe starts -> accepted -> times out -> next write starts -> late probe callback arrives -> must NOT affect the next write
+  val g = GattOpGuard(tentativeWindowMs = 1000)
+  val probe = g.begin()
+  g.abandonTentative(probe) // the probe timed out
+  var next: GattOpGuard.Op? = null
+  val starter = Thread { next = g.begin() } // the next write that needs a callback starts now
+  starter.start()
+  Thread.sleep(100)
+  check("probe: the next operation waits while the probe callback is still possible", next == null)
+  check("probe: the late probe callback is dropped", !g.complete(0))
+  starter.join(2000)
+  val b = next ?: throw AssertionError("FAILED: probe: next operation did not start after the late callback")
+  check("probe: the next operation was NOT completed by the late probe callback", !done(b))
+  check("probe: the probe is not completed either", !done(probe))
+  check("probe: the real callback of the next operation completes it", g.complete(0) && value(b) == 0)
+  check("probe: and a duplicate is ignored", !g.complete(0))
+}
+
+private fun testProbeNeverCallsBack() {
+  // The phone never calls back for a write without response: the window ends, nothing is lost.
+  val g = GattOpGuard(tentativeWindowMs = 150)
+  g.abandonTentative(g.begin())
+  val started = System.nanoTime()
+  val b = g.begin() // waits for the window, then starts
+  val waitedMs = (System.nanoTime() - started) / 1_000_000
+  check("probe-never: the wait is bounded by the window", waitedMs in 100..1500)
+  check("probe-never: the real callback of the next operation is not lost", g.complete(0) && value(b) == 0)
+}
+
+private fun testProbeThenDisconnect() {
+  val g = GattOpGuard(tentativeWindowMs = 5000)
+  g.abandonTentative(g.begin())
+  var failed: Throwable? = null
+  val t = Thread { try { g.begin() } catch (e: IllegalStateException) { failed = e } }
+  t.start()
+  Thread.sleep(50)
+  g.abort(-1) // disconnect while the next write waits
+  t.join(2000)
+  check("probe-disconnect: a waiting operation ends at disconnect", failed != null && !t.isAlive)
+  check("probe-disconnect: late callback ignored", !g.complete(0))
+}
+
 fun main() {
-  testA(); testB(); testC(); testD(); testE(); testMore()
+  testA(); testB(); testC(); testD(); testE(); testMore(); testProbe(); testProbeNeverCallsBack(); testProbeThenDisconnect()
   println("GattOpGuard: $passed checks passed")
 }
