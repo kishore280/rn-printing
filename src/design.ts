@@ -52,6 +52,8 @@ export interface DesignBarcode {
   /** Narrow bar width in dots, 1 to 10. Default 2. */
   moduleWidth?: number;
   showText?: boolean;
+  /** 90 turns the bars a quarter turn (^BC orientation R). NOT checked on the SNBC printer. */
+  rotation?: 0 | 90;
 }
 
 export interface DesignQr {
@@ -192,11 +194,11 @@ export function checkDesign(design: LabelDesign): DesignIssue[] {
         });
       }
     }
-    if (it.kind === 'text' && it.rotation === 90) {
+    if ((it.kind === 'text' || it.kind === 'barcode') && it.rotation === 90) {
       issues.push({
         severity: 'warning',
         code: 'ROTATION',
-        message: 'Rotated text is not checked on the printer. Print a test first.',
+        message: 'A turned text or barcode is not checked on the printer. Print a test first.',
         item,
       });
     }
@@ -244,6 +246,7 @@ export function designToLabel(design: LabelDesign): ZplLabel {
           height: Math.max(1, dots(it.heightMm)),
           moduleWidth: it.moduleWidth ?? 2,
           showText: it.showText ?? true,
+          rotation: it.rotation === 90 ? 'R' : 'N',
         });
         break;
       case 'qr':

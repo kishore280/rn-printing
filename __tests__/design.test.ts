@@ -54,6 +54,13 @@ describe('designToZpl', () => {
     expect((parseZpl(z).labels[0]?.elements[0] as { text: string }).text).toBe('a^b~c_d');
   });
 
+  it('turns a barcode a quarter turn (^BCR) and warns that a turned barcode is not checked', () => {
+    const d = base([{ kind: 'barcode', xMm: 12, yMm: 2, type: 'code128', data: '12345', heightMm: 8, rotation: 90 }]);
+    expect(designToZpl(d)).toContain('^BCR,64,Y,N,N');
+    expect(designToZpl(base([{ kind: 'barcode', xMm: 12, yMm: 2, type: 'code128', data: '12345', heightMm: 8 }]))).toContain('^BCN,64,Y,N,N');
+    expect(checkDesign(d).map((i) => i.code)).toContain('ROTATION');
+  });
+
   it('makes barcodes and QR codes', () => {
     const z = designToZpl(
       base([
