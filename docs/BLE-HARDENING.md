@@ -95,3 +95,62 @@ Bluetooth toggled mid-job, app to background mid-job, two phones, phone asleep, 
 
 The issue lists of flutter_blue_plus and react-native-ble-plx (no verified URLs), the HCI spec text, Android 15 changes other than
 status 147, StarXpand and Brother SDK pages, Zebra `ConnectionTimeout`, and every number for the SNBC printer.
+
+## 7. Round 2: operating systems, papers, failure detectors (2026-10-08)
+
+Five more research passes. [V] = read, [S] = snippet, [U] = not verified. Full links are in the lists below.
+
+### What the operating systems do
+
+All three desktop and phone stacks keep the layers apart: adapter power, link, security, "services resolved", and the result of each operation.
+- Linux BlueZ [V]: `Adapter1.Powered`, `Device1.Connected`, `Device1.ServicesResolved`, `Paired`, `Trusted`; `WriteValue` option `type` = `command` (without response), `request` or `reliable`. `Connected=true` with `ServicesResolved=false` is a real state (a race is reported [S]). Our `BluetoothLETransport` reports `connected` only after discovery, so that state is never shown as ready.
+  https://raw.githubusercontent.com/bluez/bluez/master/doc/org.bluez.Device.rst , .../org.bluez.GattCharacteristic.rst , .../org.bluez.Adapter.rst
+- Windows [V]: `GattSession.SessionStatus` (Active, Closed), `MaintainConnection` (the system waits for the device, nothing for the app to wait on), `MaxPduSize` read-only with a change event, and a per-call `GattCommunicationStatus` (Success, Unreachable, ProtocolError, AccessDenied).
+  https://learn.microsoft.com/en-us/uwp/api/windows.devices.bluetooth.genericattributeprofile.gattsession
+- Apple [V]: `centralManager(_:didDisconnectPeripheral:timestamp:isReconnecting:error:)` (iOS 17+) and `CBConnectPeripheralOptionEnableAutoReconnect`. `isReconnecting` meaning is inferred [U].
+  https://developer.apple.com/documentation/corebluetooth/cbconnectperipheraloptionenableautoreconnect.md
+- Android [S]: one `onConnectionStateChange` callback. The layers must be rebuilt by the app. That is what `BluetoothLETransport` and `LabelPrinter` do.
+- Real flow control: ATT write without response has none. Apple gives a host-queue signal (`canSendWriteWithoutResponse`). Android's write callback only says the stack took the bytes. L2CAP credit-based channels are the standard answer for bulk data, but need a printer that offers a PSM [U].
+
+### What the papers say (only what was read)
+
+I found NO peer-reviewed study of BLE central bugs on Android or iOS. Do not cite one.
+- Makhshari and Mesbah, "IoT Bugs and Development Challenges", ICSE 2021 [V, partly]: connectivity is the most frequent and most severe bug class (97.2 % of 194 developers met it). Its taxonomy has "reconnection", "disconnection" and "timing/rate/ordering". https://people.ece.ubc.ca/amesbah/resources/papers/iot-icse21.pdf
+- Wu et al., BLESA, USENIX WOOT 2020 [V]: on reconnect, Android and iOS clients kept going without encryption after it failed. Rule: abort on a failed security step. https://www.cs.purdue.edu/homes/dxu/pubs/WOOT20.pdf
+- Garbelini et al., SweynTooth, USENIX ATC 2020 [V, partly]: 11 new flaws in peripheral stacks (deadlock, crash, truncated packets). Rule: every wait has a timeout, and a stuck peer must not stick the library. https://www.usenix.org/conference/atc20/presentation/garbelini
+- Pferscher and Aichernig, automata learning of 6 BLE devices (2023) [V, partly]: the same request gets different answers from different stacks. https://arxiv.org/abs/2211.16074
+- Bulic et al., Sensors 19(17):3746, 2019 [V]: for write without response the connection interval is not the main lever. https://pmc.ncbi.nlm.nih.gov/articles/PMC6749335/
+- Pang et al., arXiv:2405.01231 (2024) [V]: link-layer retransmission is automatic; under high bit error rate, smaller packets are more reliable. https://arxiv.org/abs/2405.01231
+- Punch Through, throughput articles [V]: Android queue depth can be 1 with no feedback when overwritten; about 50 KB/s with DLE on newer phones. https://punchthrough.com/ble-transfer-methods-for-throughput/ , https://punchthrough.com/ble-throughput-part-4/
+- Apple Developer Forums 770717 [V, forum]: iPhone 16 Pro, write without response, about 300 to 600 kbps against well over 1000 kbps on Android. Pace by the ready flag, not a timer.
+- Hayashibara et al., phi accrual detector (2004) [S]; Chen, Toueg, Aguilera, QoS of failure detectors (2002) [S]; SWIM (2002) [S]; Huang et al., gray failure, HotOS 2017 [S]. Used for `linkHealth.ts`: suspicion before loss, requirements as numbers, "connected is not healthy".
+- Linux `net/core/link_watch.c` [V]: "Minimise down-time: drop delay for up event", and one event per second at most. NetworkManager `carrier-wait-timeout` 5 s [S]; systemd-networkd `IgnoreCarrierLoss` 3 to 5 s [V]. RFC 2439 (route flap damping) [V]: a decaying score with a cutoff above a reuse limit. Not built here: the app has one printer, so one grace time is enough.
+- AWS "Exponential Backoff And Jitter" [V]; Google SRE "Handling Overload" and "Addressing Cascading Failures" [V]: always jitter, no retries stacked in layers, a retry budget. We have one layer (cockatiel).
+
+### Defaults and their evidence
+
+| Parameter | Value now | Evidence | Confidence |
+| --- | --- | --- | --- |
+| MTU request | 247 | Punch Through (Android max 517, DLE 251) | medium |
+| Piece size | min(MTU - 3, platform limit) | Punch Through | high for the overhead math |
+| Write without response pacing, Android | callback plus 10 ms | one Nordic forum report fixed loss with 50 ms | low: test 10 to 50 ms on the TVS |
+| Write without response pacing, iOS | `canSendWriteWithoutResponse` | Apple docs, forum 770717 | high |
+| Link grace before "lost" | 4 s | NetworkManager 5 s, systemd-networkd 3 to 5 s | medium |
+| Hard failures for "lost" | 2 | our choice | low |
+| Connect timeout | 10 s | Android shows 4 to 5 s outliers [S] | low |
+| Retry | 3 tries, 300 ms x2, cap 2 s, jitter | AWS, SRE, Nordic `retry(3, 100)` | low: not measured on the printer |
+
+### Tests added from this research
+
+- Callback order: a table of every (operation kind x callback kind) case in `test-native/GattOpGuardTest.kt` (117 checks), including Android 14's unasked MTU callback.
+- Soak: 150 connect / print / disconnect cycles with random failures (`__tests__/bluetoothLE.test.ts`): every link closed, no leaked listener, clean recovery.
+- Property test: the chunker, 2000 random cases (`__tests__/properties.test.ts`).
+- Fuzz: the status parsers, every truncation and 3000 random strings.
+- Link health: a first connect that fails is not a loss; a link that returns inside 4 s never shows `lost`; two hard failures in a row do.
+- Error codes: Kotlin, Swift and TS are read by a test and must use only codes of the table.
+
+### Not done, and why
+
+- Bumble or Root Canal on an emulator, CoreBluetoothMock, and AALpy model learning: useful, but each needs tooling that is not in this container. Listed as the next test layer.
+- L2CAP credit-based channels: the TVS is not known to offer a PSM.
+- Reconnect by the OS (`MaintainConnection`, iOS auto-reconnect, Android `autoConnect`): we reconnect when a job starts, as before. Add it only if the hardware test shows a need.

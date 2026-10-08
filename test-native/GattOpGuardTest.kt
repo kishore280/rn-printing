@@ -76,6 +76,49 @@ private fun testOwedKind() {
   check("O: the read callback completes the read", g.complete(0, GattOpGuard.Kind.READ) && done(b))
 }
 
+// A table of (state x callback) cases: every cell is handled or dropped, never a crash and never a wrong completion.
+private fun testTable() {
+  val kinds = GattOpGuard.Kind.values()
+  // 1. No operation waits: every kind of callback is dropped.
+  for (k in kinds) {
+    val g = GattOpGuard()
+    check("T1 $k: a stray callback with no active operation is dropped", !g.complete(0, k))
+  }
+  // 2. One operation waits: only its own kind completes it, once.
+  for (active in kinds) for (k in kinds) {
+    val g = GattOpGuard()
+    val op = g.begin(active)
+    val first = g.complete(0, k)
+    check("T2 $active/$k: completes only for the same kind", first == (k == active) && done(op) == (k == active))
+    check("T2 $active/$k: a second callback never completes it again", !g.complete(0, k) || !first)
+  }
+  // 3. After abort: nothing completes, and abort twice is harmless.
+  for (k in kinds) {
+    val g = GattOpGuard()
+    g.begin(k)
+    g.abort(-1)
+    g.abort(-1)
+    check("T3 $k: no callback completes after the link is gone", kinds.none { g.complete(0, it) })
+  }
+  // 4. Given-up operations of each kind owe exactly one callback of their own kind, in order.
+  for (k in kinds) {
+    val g = GattOpGuard()
+    val a = g.begin(k)
+    g.abandon(a, accepted = true)
+    val b = g.begin(k)
+    check("T4 $k: the late callback of the given-up operation is dropped", !g.complete(0, k) && !done(b))
+    check("T4 $k: the next callback completes the new operation", g.complete(0, k) && done(b))
+  }
+  // 5. A refused operation (Android did not accept it) owes nothing.
+  for (k in kinds) {
+    val g = GattOpGuard()
+    val a = g.begin(k)
+    g.abandon(a, accepted = false)
+    val b = g.begin(k)
+    check("T5 $k: a refused operation leaves no debt", g.complete(0, k) && done(b))
+  }
+}
+
 private fun testD() {
   // normal write callback -> operation completes exactly once
   val g = GattOpGuard()
@@ -168,6 +211,6 @@ private fun testProbeThenDisconnect() {
 }
 
 fun main() {
-  testA(); testB(); testC(); testD(); testE(); testMore(); testProbe(); testProbeNeverCallsBack(); testProbeThenDisconnect(); testMtuKind(); testOwedKind()
+  testA(); testB(); testC(); testD(); testE(); testMore(); testProbe(); testProbeNeverCallsBack(); testProbeThenDisconnect(); testMtuKind(); testOwedKind(); testTable()
   println("GattOpGuard: $passed checks passed")
 }

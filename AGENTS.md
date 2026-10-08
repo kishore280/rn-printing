@@ -43,7 +43,9 @@ Read this file before you change the code. It tells you where things are, how th
 | `src/printer.ts` | `LabelPrinter`: queue (mutex), `print`, `printAll`, status. |
 | `src/reconnect.ts` | cockatiel retry policy, transient-error rule, `ReconnectOptions`, `ConnectionEvent`. Used by `LabelPrinter`. |
 | `src/status.ts` | Parsers for `~HS` and `~HQES` replies. |
-| `src/transport.ts` | `Transport` interface. |
+| `src/transport.ts` | `Transport` interface, `LinkState`, `LinkEvent`, `WriteOptions`. The link events and `cancel` are optional on a transport. |
+| `src/linkHealth.ts` | Pure rules: is the link really lost? `up` / `wobbling` / `lost` / `unknown`. Up is never delayed; down waits 4 s or two hard failures. `LabelPrinter.health` runs it. Numbers are NOT measured on the printer. |
+| `src/errorCodes.ts` | The one table of error codes (transient, before any byte, user must fix). `__tests__/errorCodes.test.ts` fails when Kotlin, Swift or TS use a code that is not in it. |
 | `src/transports/` | `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLE` scan/connect + `BluetoothLETransport`, Nitro; `readGatt()` reads every readable characteristic), `sig.ts` (Bluetooth SIG names and decoders for 16-bit UUIDs only), `bleGatt.ts` (pure GATT selection), `chunk.ts` (pure splitting), `tcp.ts`, `inbox.ts`. |
 | `src/native.ts` | Lazy loading of Nitro objects. `setNativeCodec` / `setClassicBluetooth` for tests. |
 | `src/encoding.ts` | base64, UTF-8, Latin-1 helpers. |
@@ -118,6 +120,8 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 - ONE retry layer: `LabelPrinter` + `src/reconnect.ts`, built on `cockatiel` (RetryPolicy, ExponentialBackoff, decorrelated jitter). Do not add retry inside a transport or add a second retry library. Do not hand-roll backoff.
 - cockatiel `maxAttempts` counts retries, ours counts the first try too (`maxAttempts - 1`).
 - Delay defaults (300 ms, x2, cap 2 s) are our choice and are not tested on the printer.
+- A screen shows "not connected" from `LabelPrinter.health`, never from one raw link event (`onConnectionState`): one event is a wobble (Linux `link_watch`, NetworkManager and systemd-networkd wait a few seconds too). Do not copy this debounce into an app.
+- A new error code goes in `src/errorCodes.ts` first. `__tests__/errorCodes.test.ts` checks Kotlin, Swift and TS against it.
 - No background reconnect loop. Reconnect runs when a job starts.
 
 ## Facts you need

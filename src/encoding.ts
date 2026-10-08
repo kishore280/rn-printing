@@ -107,10 +107,10 @@ for (let i = 0; i < 64; i++) {
 /** Turn ASCII bytes into a string. Works in pieces so a big array does not overflow the call stack. */
 export function asciiToString(bytes: Uint8Array): string {
   const PIECE = 0x2000;
-  if (bytes.length <= PIECE) return String.fromCharCode.apply(null, bytes as unknown as number[]);
+  if (bytes.length <= PIECE) return String.fromCharCode.apply(null, Array.from(bytes));
   let s = '';
   for (let i = 0; i < bytes.length; i += PIECE) {
-    s += String.fromCharCode.apply(null, bytes.subarray(i, i + PIECE) as unknown as number[]);
+    s += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + PIECE)));
   }
   return s;
 }

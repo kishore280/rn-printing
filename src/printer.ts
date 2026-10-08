@@ -8,6 +8,7 @@ import {
   resolveReconnect,
   ResolvedReconnect,
 } from './reconnect';
+import { settle, settleDelay, observe, HEALTH_START, type Evidence, type HealthState, type LinkHealth } from './linkHealth';
 import { zplSettings } from './zpl';
 import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
 import { TransportError } from './errors';
@@ -58,13 +59,80 @@ export class LabelPrinter {
 
   private readonly reconnect: ResolvedReconnect;
   private readonly onEvent: (event: ConnectionEvent) => void;
+  private healthState: HealthState = HEALTH_START;
+  private healthTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly healthListeners = new Set<(health: LinkHealth) => void>();
+  private readonly stopLinkEvents: () => void;
 
   constructor(
     private readonly transport: Transport,
     options: LabelPrinterOptions = {}
   ) {
     this.reconnect = resolveReconnect(options.reconnect);
-    this.onEvent = options.onConnectionEvent ?? (() => undefined);
+    const user = options.onConnectionEvent ?? (() => undefined);
+    this.onEvent = (e) => {
+      if (e.type === 'connected') this.feed({ kind: 'alive' });
+      else if (e.type === 'failed') this.feed({ kind: 'failed' });
+      user(e);
+    };
+    // The transport tells when the link opens, closes or is lost. A failed write ends in `disconnected` with an error.
+    this.stopLinkEvents =
+      transport.onConnectionState?.((e) => {
+        if (e.state === 'connected') this.feed({ kind: 'alive' });
+        else if (e.state === 'disconnected') {
+          if (e.reason === 'requested') this.feed({ kind: 'closed' });
+          else this.feed({ kind: e.error ? 'failed' : 'down' });
+        }
+      }) ?? (() => undefined);
+  }
+
+  /** Feed the link-health rules (linkHealth.ts) and run their timer. */
+  private feed(evidence: Evidence): void {
+    const before = this.healthState.health;
+    this.healthState = observe(this.healthState, evidence, Date.now());
+    this.armHealthTimer();
+    if (this.healthState.health !== before) this.emitHealth();
+  }
+
+  private armHealthTimer(): void {
+    if (this.healthTimer) clearTimeout(this.healthTimer);
+    this.healthTimer = null;
+    const delay = settleDelay(this.healthState, Date.now());
+    if (delay === null) return;
+    this.healthTimer = setTimeout(() => {
+      this.healthTimer = null;
+      const before = this.healthState.health;
+      this.healthState = settle(this.healthState, Date.now());
+      if (this.healthState.health !== before) this.emitHealth();
+    }, delay);
+  }
+
+  private emitHealth(): void {
+    for (const l of [...this.healthListeners]) l(this.healthState.health);
+  }
+
+  /**
+   * Is the link really lost? `up`, `wobbling` (down, not sure yet), `lost` (down for 4 s, or two hard failures in a row), or `unknown`
+   * (no link yet, or closed on purpose). One link event never turns `up` into `lost`: see linkHealth.ts for the rules and sources.
+   * This is the link only. A printer that is connected but does not answer `~HS` stays `up`: `getStatus()` returns null for it.
+   */
+  get health(): LinkHealth {
+    return this.healthState.health;
+  }
+
+  /** Be told when `health` changes. Returns a function that removes the listener. */
+  onHealth(listener: (health: LinkHealth) => void): () => void {
+    this.healthListeners.add(listener);
+    return () => this.healthListeners.delete(listener);
+  }
+
+  /** Close the link and stop the printer's timers and listeners. Call it when the printer object is thrown away. */
+  async dispose(): Promise<void> {
+    this.stopLinkEvents();
+    if (this.healthTimer) clearTimeout(this.healthTimer);
+    this.healthTimer = null;
+    this.healthListeners.clear();
+    await this.transport.disconnect().catch(() => undefined);
   }
 
   /** Open the link (with retry) if it is closed. */
@@ -135,8 +203,8 @@ export class LabelPrinter {
 
   /**
    * Be told when the link changes (connect, write, lost link, close). Returns a function that removes the listener.
-   * Returns a function that does nothing when the transport has no events. Pair it with a debounce in the screen:
-   * one `disconnected` can be a wobble (see the app's link-state rules).
+   * Returns a function that does nothing when the transport has no events. These are raw events: one `disconnected` can be a
+   * wobble. To show "not connected" to a person, use `health` and `onHealth`.
    */
   onConnectionState(listener: (event: LinkEvent) => void): () => void {
     return this.transport.onConnectionState?.(listener) ?? (() => undefined);

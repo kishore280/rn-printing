@@ -55,7 +55,6 @@ export function normalizeUuid(uuid: string): string {
   return t;
 }
 
-export const sameUuid = (a: string, b: string): boolean => normalizeUuid(a) === normalizeUuid(b);
 
 /**
  * Bluetooth SIG services that hold device information, not data for an application:
@@ -66,6 +65,8 @@ const SKIPPED_SERVICES = ['1800', '1801', '180a'].map(normalizeUuid);
 
 const canWrite = (c: BleGattCharacteristic): boolean => c.write || c.writeWithoutResponse;
 const canNotify = (c: BleGattCharacteristic): boolean => c.notify || c.indicate;
+const sameUuid = (a: string, b: string): boolean => normalizeUuid(a) === normalizeUuid(b);
+
 const same = (a: BleGattCharacteristic, b: BleGattCharacteristic): boolean => sameUuid(a.serviceUuid, b.serviceUuid) && sameUuid(a.uuid, b.uuid);
 
 /** A readable list of the GATT table, one line per characteristic. For logs and error messages. */

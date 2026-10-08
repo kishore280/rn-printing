@@ -108,10 +108,10 @@ export interface DesignIssue {
  * produces characters that appear the most balanced" (p. 898). Its default matrix is 15 high x 12 wide (0.8). Our first product
  * labels used equal values and printed right on the TVS. Not settled for text sizes: see test label T17.
  */
-export const FONT0_RATIO = 1;
+const FONT0_RATIO = 1;
 
 /** The smallest character height or width for a scalable font: 10 dots (Zebra ZPL II guide, ^A). */
-export const MIN_SCALABLE_DOTS = 10;
+const MIN_SCALABLE_DOTS = 10;
 
 /**
  * Minimum size of the veg / non-veg symbol by the area of the principal display panel.

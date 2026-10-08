@@ -13,7 +13,7 @@ ZplLabel / CpclLabel / BplaLabel  ->  bytes  ->  LabelPrinter  ->  Transport  ->
   Both are called from Nitro objects (`BluetoothLE`, `BleConnection`). There is no third-party BLE library.
 - No MAC address, device name, PIN or UUID is built in. The package finds the GATT table at run time.
 - Bluetooth Classic (SPP) is not changed. BLE does not use the Classic PIN.
-- `BluetoothLETransport` is the only BLE transport. The older `BleTransport` and `blePlxClient` (for `react-native-ble-plx`) were removed. There is no dependency on `react-native-ble-plx`.
+- `BluetoothLETransport` is the only BLE transport. There is no dependency on a third-party BLE library.
 
 ## Set up
 

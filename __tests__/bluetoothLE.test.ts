@@ -1298,3 +1298,56 @@ describe('BluetoothLETransport: what a failed write says it sent', () => {
     expect((error as TransportError).bytesSent).toBe(0);
   });
 });
+
+// ---- soak: many cycles with random failures (from the BLE bug research: reconnection and timing are the top IoT bug causes) ----
+
+describe('BluetoothLETransport: soak (150 cycles of connect, print, disconnect, with random failures)', () => {
+  it('always recovers, never leaves a link open, and leaks no listeners', async () => {
+    let seed = 12345;
+    const random = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    let failNext = false;
+    const fake = fakeNative({
+      mtu: 185,
+      writeImpl: async () => {
+        if (failNext && random() < 0.5) throw new Error('[E_WRITE] status 133');
+      },
+      discoverImpl: async () => {
+        if (failNext && random() < 0.2) throw new Error('[E_DISCOVERY] status 133');
+        return serialGatt();
+      },
+    });
+    const t = new BluetoothLETransport('dev-1');
+    const states: string[] = [];
+    const off = t.onConnectionState((e) => states.push(e.state));
+    let printed = 0;
+    let failed = 0;
+    for (let cycle = 0; cycle < 150; cycle++) {
+      failNext = random() < 0.4;
+      try {
+        await t.connect();
+        await t.write(bytes(300, cycle));
+        printed++;
+      } catch {
+        failed++;
+      }
+      await t.disconnect();
+      expect(await t.isConnected()).toBe(false);
+    }
+    expect(printed).toBeGreaterThan(40);
+    expect(failed).toBeGreaterThan(10);
+    // Every link that was opened is closed again.
+    expect(fake.links.every((l) => !l.connected)).toBe(true);
+    expect(fake.links.every((l) => l.disconnects >= 1)).toBe(true);
+    // One more clean cycle after all the failures.
+    failNext = false;
+    await t.connect();
+    await t.write(bytes(10));
+    expect(t.connectionState).toBe('connected');
+    off();
+    await t.disconnect();
+    expect(t.connectionState).toBe('disconnected');
+  });
+});

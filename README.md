@@ -127,7 +127,7 @@ await lp.print(label);
 
 Scan, GATT discovery, write type, piece size, flow control, errors, troubleshooting and a manual test plan: [docs/BLE.md](docs/BLE.md).
 
-The older `BleTransport` and `blePlxClient` (`react-native-ble-plx`) were removed. `BluetoothLETransport` replaces them and needs no extra BLE package.
+`BluetoothLETransport` needs no extra BLE package.
 
 ### TCP
 
