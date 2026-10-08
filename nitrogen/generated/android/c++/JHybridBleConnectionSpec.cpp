@@ -73,6 +73,11 @@ namespace margelo::nitro::bplzlabel {
     auto __result = method(_javaPart);
     return __result->toStdString();
   }
+  std::string JHybridBleConnectionSpec::getBondState() {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<jni::JString>()>("getBondState");
+    auto __result = method(_javaPart);
+    return __result->toStdString();
+  }
 
   // Methods
   std::shared_ptr<Promise<double>> JHybridBleConnectionSpec::requestMtu(double mtu) {
@@ -83,6 +88,22 @@ namespace margelo::nitro::bplzlabel {
       __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
         auto __result = jni::static_ref_cast<jni::JDouble>(__boxedResult);
         __promise->resolve(__result->value());
+      });
+      __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
+        jni::JniException __jniError(__throwable);
+        __promise->reject(std::make_exception_ptr(__jniError));
+      });
+      return __promise;
+    }();
+  }
+  std::shared_ptr<Promise<bool>> JHybridBleConnectionSpec::bond(double timeoutMs) {
+    static const auto method = _javaPart->javaClassStatic()->getMethod<jni::local_ref<JPromise::javaobject>(double /* timeoutMs */)>("bond");
+    auto __result = method(_javaPart, timeoutMs);
+    return [&]() {
+      auto __promise = Promise<bool>::create();
+      __result->cthis()->addOnResolvedListener([=](const jni::alias_ref<jni::JObject>& __boxedResult) {
+        auto __result = jni::static_ref_cast<jni::JBoolean>(__boxedResult);
+        __promise->resolve(static_cast<bool>(__result->value()));
       });
       __result->cthis()->addOnRejectedListener([=](const jni::alias_ref<jni::JThrowable>& __throwable) {
         jni::JniException __jniError(__throwable);

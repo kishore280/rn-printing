@@ -54,10 +54,12 @@ namespace margelo::nitro::bplzlabel {
       virtual bool getIsConnected() = 0;
       virtual double getMtu() = 0;
       virtual std::string getNoResponseCallback() = 0;
+      virtual std::string getBondState() = 0;
 
     public:
       // Methods
       virtual std::shared_ptr<Promise<double>> requestMtu(double mtu) = 0;
+      virtual std::shared_ptr<Promise<bool>> bond(double timeoutMs) = 0;
       virtual std::shared_ptr<Promise<std::vector<BleCharacteristic>>> discover() = 0;
       virtual double maxWriteLength(bool withResponse) = 0;
       virtual std::shared_ptr<Promise<void>> write(const std::string& serviceUuid, const std::string& characteristicUuid, const std::shared_ptr<ArrayBuffer>& data, bool withResponse, double timeoutMs) = 0;

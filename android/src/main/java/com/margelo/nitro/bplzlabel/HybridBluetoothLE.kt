@@ -42,6 +42,7 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
   private val lock = Any()
   private var scan: ScanSession? = null
   private var stateReceiver: BroadcastReceiver? = null
+  private val openLinks = HashMap<String, java.lang.ref.WeakReference<HybridBleConnection>>()
 
   override val memorySize: Long
     get() = 4096L
@@ -179,7 +180,17 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       }
       synchronized(lock) { scan?.finish(null) } // Android advises: no scan while connecting
       val device = bt.getRemoteDevice(deviceId)
-      HybridBleConnection(context, device, onDisconnect).open(timeoutMs.toLong(), promise)
+      // One central per printer: many printers allow only one link. A second connection to the same device (for example an inspect while the
+      // print link is open) replaces the older one, and waits a moment after the close (Nordic: 200 ms) before it connects again.
+      val older = synchronized(openLinks) { openLinks.remove(deviceId.uppercase())?.get() }
+      val link = HybridBleConnection(context, device, onDisconnect)
+      synchronized(openLinks) { openLinks[deviceId.uppercase()] = java.lang.ref.WeakReference(link) }
+      if (older != null && older.isConnected) {
+        older.forceClose()
+        main.postDelayed({ link.open(timeoutMs.toLong(), promise) }, CLOSE_SETTLE_MS)
+      } else {
+        link.open(timeoutMs.toLong(), promise)
+      }
     } catch (e: Throwable) {
       return Promise.rejected(e)
     }
@@ -342,6 +353,9 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
     private const val REQUEST_ENABLE = 7421
     private const val ENABLE_WAIT_MS = 5000L
     private const val ENABLE_POLL_MS = 100L
+
+    /** Nordic waits 200 ms between closing a GATT client and the next connectGatt to the same device. */
+    private const val CLOSE_SETTLE_MS = 200L
 
     /** ScanCallback.SCAN_FAILED_SCANNING_TOO_FREQUENTLY: not a public constant on every SDK. */
     private const val SCAN_FAILED_TOO_FREQUENT = 6

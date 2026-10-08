@@ -14,9 +14,11 @@ public protocol HybridBleConnectionSpec_protocol: HybridObject {
   var isConnected: Bool { get }
   var mtu: Double { get }
   var noResponseCallback: String { get }
+  var bondState: String { get }
 
   // Methods
   func requestMtu(mtu: Double) throws -> Promise<Double>
+  func bond(timeoutMs: Double) throws -> Promise<Bool>
   func discover() throws -> Promise<[BleCharacteristic]>
   func maxWriteLength(withResponse: Bool) throws -> Double
   func write(serviceUuid: String, characteristicUuid: String, data: ArrayBuffer, withResponse: Bool, timeoutMs: Double) throws -> Promise<Void>

@@ -206,6 +206,9 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
   }
 
   func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+    // A late event of the link before. A new connect is already running (or done) on the same CBPeripheral, and this
+    // event must not end it. Apple: the peripheral's state tells which link is current.
+    if peripheral.state == .connecting || peripheral.state == .connected { return }
     let reason = error?.localizedDescription ?? "the device closed the link"
     if let entry = connecting.removeValue(forKey: peripheral.identifier) {
       entry.settle.reject(bleError("E_CONNECT", "Cannot connect to \(peripheral.identifier.uuidString): \(reason)"))
@@ -286,12 +289,23 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
         return
       }
       self.known[uuid] = target
+      // One link per device. A second open ends the first, so no promise is left waiting and no old link stays up
+      // (Nordic's BleManager does the same).
+      if let older = self.connecting.removeValue(forKey: uuid) {
+        older.settle.reject(bleError("E_CONNECT", "Another connect to \(deviceId) started"))
+      }
+      if let old = self.connections.removeValue(forKey: uuid) {
+        old.handleDisconnect(reason: "a new connection was opened")
+        self.manager.cancelPeripheralConnection(target)
+      }
       let conn = HybridBleConnection(peripheral: target, central: self, onDisconnect: onDisconnect)
       self.connecting[uuid] = (conn: conn, settle: settle)
       self.manager.connect(target, options: nil)
       if timeoutMs > 0 {
         self.queue.asyncAfter(deadline: .now() + timeoutMs / 1000.0) {
-          if let entry = self.connecting.removeValue(forKey: uuid) {
+          // Only this attempt: a timer of an older attempt must not end a newer one.
+          if let entry = self.connecting[uuid], entry.conn === conn {
+            self.connecting.removeValue(forKey: uuid)
             self.manager.cancelPeripheralConnection(target)
             entry.settle.reject(bleError("E_TIMEOUT", "No answer from \(deviceId) after \(Int(timeoutMs)) ms. Is the device on and in range?"))
           }
@@ -305,7 +319,8 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
     manager.cancelPeripheralConnection(peripheral)
   }
 
-  func forget(_ peripheral: CBPeripheral) {
-    connections.removeValue(forKey: peripheral.identifier)
+  /// Drop the link from the table, but only when it is still the current one for that device.
+  func forget(_ conn: HybridBleConnection, _ peripheral: CBPeripheral) {
+    if connections[peripheral.identifier] === conn { connections.removeValue(forKey: peripheral.identifier) }
   }
 }

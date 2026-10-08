@@ -111,6 +111,15 @@ export interface BluetoothLETransportOptions extends BleSelectionOptions {
   writeTimeoutMs?: number | undefined;
   /** Turn on notifications for printer replies (status queries). Default true. */
   subscribe?: boolean | undefined;
+  /**
+   * What to do when the device wants an encrypted link (an operation fails with `E_AUTH`). `auto` (default): pair with the device once per
+   * connection (Android `createBond`, the phone shows its pairing dialog), wait for the result, and do the failed operation again. `never`:
+   * report `E_AUTH` and let the caller decide. iOS pairs by itself with its own dialog, so there `auto` only does the operation again.
+   * Not checked on a printer: the TVS may not need pairing at all.
+   */
+  bond?: 'auto' | 'never' | undefined;
+  /** How long to wait for the person to accept the pairing, in ms. Default 30000. */
+  bondTimeoutMs?: number | undefined;
 }
 
 /** One row of the GATT table, with the value when the characteristic can be read. */
@@ -138,6 +147,8 @@ export interface BleWriteStats {
 
 /** The state of the link and the numbers behind it, for tests and logs (`transport.diagnostics()`). */
 export interface BleDiagnostics {
+  /** `none`, `bonding`, `bonded`, or `unknown` (iOS has no such state). null when there is no link. */
+  bondState: string | null;
   state: BleConnectionState;
   deviceId: string;
   /** The `writeMode` that was asked for. */
@@ -302,9 +313,38 @@ export class BleDeviceConnection {
 }
 
 const stateListeners = new Set<(state: BleAdapterState) => void>();
-let stateHooked = false;
+/** The native object that holds our one state listener (a new object, as in tests, needs the listener again). */
+let stateHookedOn: unknown = null;
 
 /** Scan for and connect to Bluetooth Low Energy devices. It knows nothing about printers. */
+/** How long to wait for the person to answer the iOS Bluetooth dialog. */
+const IOS_DIALOG_WAIT_MS = 60_000;
+
+/**
+ * iOS: the first `getState()` creates the central manager, which shows the permission dialog. The state stays `unknown`
+ * (or `resetting`) until the user answers, so wait for the first real state. Apple: CBManager.authorization and
+ * centralManagerDidUpdateState. Not compiled or run on iOS.
+ */
+function askIosAuthorization(): Promise<boolean> {
+  const first = BluetoothLE.getState();
+  if (first !== 'unknown' && first !== 'resetting') return Promise.resolve(first !== 'unauthorized');
+  return new Promise<boolean>((resolve) => {
+    let off: (() => void) | undefined;
+    let finished = false;
+    const done = (allowed: boolean) => {
+      finished = true;
+      clearTimeout(timer);
+      off?.();
+      resolve(allowed);
+    };
+    const timer = setTimeout(() => done(BluetoothLE.getState() !== 'unauthorized'), IOS_DIALOG_WAIT_MS);
+    off = BluetoothLE.onStateChange((state) => {
+      if (state !== 'unknown' && state !== 'resetting') done(state !== 'unauthorized');
+    });
+    if (finished) off();
+  });
+}
+
 export const BluetoothLE = {
   isSupported(): boolean {
     return getBluetoothLE() !== null;
@@ -313,10 +353,11 @@ export const BluetoothLE = {
   /**
    * Ask for the runtime permissions. Android 12+: BLUETOOTH_SCAN and BLUETOOTH_CONNECT.
    * Android 11 and older: ACCESS_FINE_LOCATION (Android needs it to scan; the library does not read your location).
-   * iOS: nothing to ask. iOS shows the dialog at the first scan or connect. Returns true when allowed.
+   * iOS: reading the state starts the system dialog the first time, and this waits until the user has answered
+   * (CoreBluetooth reports `unknown` until then). Returns true when allowed.
    */
   async requestPermissions(): Promise<boolean> {
-    if (Platform.OS !== 'android') return BluetoothLE.getState() !== 'unauthorized';
+    if (Platform.OS !== 'android') return askIosAuthorization();
     const permissions =
       typeof Platform.Version === 'number' && Platform.Version >= 31
         ? ['android.permission.BLUETOOTH_SCAN', 'android.permission.BLUETOOTH_CONNECT']
@@ -343,8 +384,8 @@ export const BluetoothLE = {
   onStateChange(listener: (state: BleAdapterState) => void): () => void {
     const mod = native();
     stateListeners.add(listener);
-    if (!stateHooked) {
-      stateHooked = true;
+    if (stateHookedOn !== mod) {
+      stateHookedOn = mod;
       mod.setStateListener((s) => {
         for (const l of [...stateListeners]) l(s as BleAdapterState);
       });
@@ -452,6 +493,8 @@ export class BluetoothLETransport implements Transport {
   private generation = 0;
   private lostReason: string | null = null;
   private cancelled = false;
+  /** Pairing is tried once for each connection: a device that stays unpaired must not make a loop. */
+  private bondTried = false;
   private unsubscribe: (() => Promise<void>) | null = null;
   private mtuRequestText = 'not asked yet';
   private connectMs: number | null = null;
@@ -497,6 +540,7 @@ export class BluetoothLETransport implements Transport {
     const gen = ++this.generation;
     this.lostReason = null;
     this.cancelled = false;
+    this.bondTried = false;
     this.setState('connecting');
     let link: BleConnection | null = null;
     this.mtuRequestText = 'skipped';
@@ -535,12 +579,14 @@ export class BluetoothLETransport implements Transport {
         const { serviceUuid, uuid } = notify;
         const active = link;
         try {
-          await wrap(
-            // A late notification of an old link must not land in the inbox of the next one.
-            active.subscribe(serviceUuid, uuid, (data) => {
-              if (gen === this.generation) this.inbox.push(new Uint8Array(data));
-            }),
-            'E_NOTIFY'
+          await this.withBond(active, () =>
+            wrap(
+              // A late notification of an old link must not land in the inbox of the next one.
+              active.subscribe(serviceUuid, uuid, (data) => {
+                if (gen === this.generation) this.inbox.push(new Uint8Array(data));
+              }),
+              'E_NOTIFY'
+            )
           );
           this.unsubscribe = () => active.unsubscribe(serviceUuid, uuid);
         } catch {
@@ -661,6 +707,7 @@ export class BluetoothLETransport implements Transport {
     const live = link !== null && pick !== null;
     return {
       state: this.state,
+      bondState: link ? link.bondState ?? null : null,
       deviceId: this.deviceId,
       writeModeRequested: this.settings.writeMode ?? 'auto',
       withResponse: pick ? pick.withResponse : null,
@@ -724,7 +771,8 @@ export class BluetoothLETransport implements Transport {
       const error = classify(e, 'E_WRITE');
       // Say what went out, so the caller can tell a failure that sent nothing (safe to send again) from one that may have printed.
       error.bytesSent = sent;
-      error.nothingSent = !started;
+      // A refused first piece (the device wants pairing) was not accepted: nothing is in the printer.
+      error.nothingSent = !started || (error.code === 'E_AUTH' && sent === 0);
       this.lastWriteStats = stats(error);
       // The printer may hold half a job, and a native write may still be pending. Close the link,
       // so no later write can follow a failed one. The next job opens a clean link.
@@ -733,6 +781,26 @@ export class BluetoothLETransport implements Transport {
     }
     this.lastWriteStats = stats();
     if (gen === this.generation) this.setState('connected');
+  }
+
+  /**
+   * Do `op`. When it fails with `E_AUTH` (the device wants an encrypted link), pair once for this connection, wait for the result and do `op`
+   * again. Sources: Nordic Android-BLE-Library and Punch Through (bond only when the device asks, wait for the bond result, then redo the
+   * operation). A device that stays unpaired reports `E_AUTH`, never a loop.
+   */
+  private async withBond<T>(link: BleConnection, op: () => Promise<T>): Promise<T> {
+    try {
+      return await op();
+    } catch (e) {
+      const error = classify(e, 'E_WRITE');
+      if (error.code !== 'E_AUTH' || (this.settings.bond ?? 'auto') === 'never' || this.bondTried) throw error;
+      this.bondTried = true;
+      const bonded = await wrap(link.bond(this.settings.bondTimeoutMs ?? 30000), 'E_AUTH');
+      if (!bonded) throw new TransportError('The device was not paired. Accept the pairing request on the phone, then try again.', 'E_AUTH');
+      // Some devices close the link after pairing. The caller connects again; the device is paired now.
+      if (!link.isConnected) throw new TransportError('The link closed after pairing. Connect again.', 'E_DISCONNECTED');
+      return op();
+    }
   }
 
   private async failLink(gen: number, error: TransportError): Promise<void> {
@@ -765,7 +833,7 @@ export class BluetoothLETransport implements Transport {
     });
     try {
       await Promise.race([
-        wrap(link.write(pick.write.serviceUuid, pick.write.uuid, toArrayBuffer(piece), pick.withResponse, timeoutMs), 'E_WRITE'),
+        this.withBond(link, () => wrap(link.write(pick.write.serviceUuid, pick.write.uuid, toArrayBuffer(piece), pick.withResponse, timeoutMs), 'E_WRITE')),
         guard,
       ]);
     } catch (e) {

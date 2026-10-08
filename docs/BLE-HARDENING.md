@@ -154,3 +154,45 @@ I found NO peer-reviewed study of BLE central bugs on Android or iOS. Do not cit
 - Bumble or Root Canal on an emulator, CoreBluetoothMock, and AALpy model learning: useful, but each needs tooling that is not in this container. Listed as the next test layer.
 - L2CAP credit-based channels: the TVS is not known to offer a PSM.
 - Reconnect by the OS (`MaintainConnection`, iOS auto-reconnect, Android `autoConnect`): we reconnect when a job starts, as before. Add it only if the hardware test shows a need.
+
+## 8. Round 3: pairing (bonding) and the iOS code (2026-10-08)
+
+### Pairing (bonding)
+
+What the mature projects do:
+
+- Nordic Android-BLE-Library: `createBond()` is a separate step with its own wait for `ACTION_BOND_STATE_CHANGED`. It waits while the state is `BOND_BONDING` before service discovery, because a discovery during pairing fails. On Android 7 and older it adds a 300 ms delay before discovery (1600 ms when the device is bonded).
+- The Android docs: a bond starts by itself when a read, write or subscribe needs encryption and the stack gets an authentication error. An app may also call `createBond()`.
+- Apple: there is NO pairing API. iOS pairs by itself at the first operation that needs encryption, and shows its own dialog. A failure comes back as `CBATTError.insufficientAuthentication` or `.insufficientEncryption`, or as `CBError.peerRemovedPairingInformation` when the printer forgot the bond.
+
+What we do (`bond: 'auto'` is the default; `bond: 'never'` turns it off):
+
+1. A GATT operation fails with status 5, 15 or 137 (or a pairing error on the CCCD write). Kotlin maps it to `E_AUTH`.
+2. `BluetoothLETransport.withBond()` sees `E_AUTH`. Once per connection, it calls `link.bond(bondTimeoutMs)` (default 30 s).
+3. On Android, `bond()` calls `createBond()` and waits for the broadcast. If the device is bonded, the TS layer repeats the operation once. If not, it throws `E_AUTH` ("The device was not paired…"). The user must fix this, so it is not retried.
+4. On iOS, `bondState` is `unknown` and `bond()` resolves `true` at once. The repeat of the operation is what makes iOS ask the user to pair.
+5. A job that failed with `E_AUTH` before any byte went out is `nothingSent`, so the retry layer may start it again safely.
+
+Not verified: the TVS LP 46 Dlite may not need pairing at all. A user wrote to it with nRF Connect and it printed. The flow is unit-tested with a fake link (8 tests) and the Kotlin code is compiled. It has not run on a device.
+
+### iOS code written from Apple's documentation (NOT compiled, NOT run)
+
+No Swift toolchain exists here. Each item follows the Apple documentation named, and each is open for a Mac build.
+
+| Item | Change | Source |
+| --- | --- | --- |
+| Piece size with response | `maxWriteLength(withResponse: true)` returns the smaller of the with-response and without-response values, so one piece size is safe in both modes. | `CBPeripheral.maximumWriteValueLength(for:)` |
+| Write timer | The time limit of a write runs from the moment the job reaches the head of the queue. Before, it ran from the call, so a job behind a slow one could time out without being tried. | Own rule; Nordic queues requests the same way |
+| Late answers | A write with response that timed out still gets its `didWrite` later. A counter (`staleResponses`) drops that answer, so it cannot finish the next job. CoreBluetooth answers in order. | `peripheral(_:didWriteValueFor:error:)` |
+| Missing ready callback | A write without response waits for `peripheralIsReady(toSendWriteWithoutResponse:)`. Apple's forum says it can be missing in the background. The job's time limit now ends that wait with `E_TIMEOUT`. | `canSendWriteWithoutResponse`; Apple developer forum |
+| Connect attempts | A second `open()` for the same device rejects the first and closes the old link. A timer of an old attempt no longer ends a newer one. A late `didDisconnectPeripheral` is ignored when the peripheral is connecting or connected again. `forget` only removes the link that is current. | `CBPeripheral.state`; Nordic `BleManager` |
+| Permission wait | `requestPermissions()` on iOS starts the system dialog (the first `getState()` creates the manager) and waits for the first state that is not `unknown` or `resetting`. Before, it returned at once with `unknown`. Unit-tested in TypeScript (3 tests); the native side is not run. | `CBManager.authorization`, `centralManagerDidUpdateState` |
+| Pairing | `bondState` is `"unknown"`, `bond()` resolves `true`. See above. | Apple has no pairing API |
+
+Also fixed in TypeScript: the one state listener is now tied to the native object that holds it (it was a global flag, so a second native object was never hooked).
+
+### Still open
+
+- Run the hardware tests (Android, iOS) with the TVS LP 46 Dlite. Check if it asks for pairing.
+- Compile the Swift files on a Mac. The new code is small, but it has never met a compiler.
+- Bumble or CoreBluetoothMock test layers (see section 7).

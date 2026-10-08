@@ -6,7 +6,10 @@ import android.bluetooth.BluetoothGattCallback
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -115,11 +118,7 @@ class HybridBleConnection(
     override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
       if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
         connected = true
-        try {
-          // Faster connection interval. A big label sends many pieces.
-          g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
-        } catch (_: Exception) {
-        }
+        wantFastLink(g)
         settleConnect(null)
       } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
         val wasConnected = connected
@@ -279,11 +278,111 @@ class HybridBleConnection(
     }
   }
 
+  override val bondState: String
+    get() = when (device.bondState) {
+      BluetoothDevice.BOND_BONDED -> "bonded"
+      BluetoothDevice.BOND_BONDING -> "bonding"
+      else -> "none"
+    }
+
+  /**
+   * Pair with the device (createBond) and wait for the result. Nordic's library and Punch Through say to bond only when the device asks
+   * for it (an operation failed with status 5, 15 or 137), to wait for the bond result, and then to do the operation again. Some Xiaomi
+   * and Samsung phones start pairing only when the app calls createBond. Needs BLUETOOTH_CONNECT on Android 12+ (the connect needed it too).
+   */
+  override fun bond(timeoutMs: Double): Promise<Boolean> {
+    val limit = timeoutMs.toLong().let { if (it > 0) it else BOND_TIMEOUT_MS }
+    return Promise.parallel {
+      if (device.bondState == BluetoothDevice.BOND_BONDED) return@parallel true
+      val finished = CountDownLatch(1)
+      val receiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, intent: Intent?) {
+          if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+          val who = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+          if (who?.address != device.address) return
+          val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+          val before = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
+          // Done: bonded, or the pairing that was running ended with no bond (the user said no, or it failed).
+          if (state == BluetoothDevice.BOND_BONDED || (state == BluetoothDevice.BOND_NONE && before == BluetoothDevice.BOND_BONDING)) finished.countDown()
+        }
+      }
+      context.registerReceiver(receiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
+      try {
+        // The stack may have started pairing by itself already. Only start it when it is not running.
+        if (device.bondState != BluetoothDevice.BOND_BONDING && !device.createBond()) {
+          throw BleError("E_AUTH", "Android could not start pairing with ${device.address}")
+        }
+        finished.await(limit, TimeUnit.MILLISECONDS)
+      } finally {
+        try {
+          context.unregisterReceiver(receiver)
+        } catch (_: IllegalArgumentException) {
+        }
+      }
+      device.bondState == BluetoothDevice.BOND_BONDED
+    }
+  }
+
+  /** Wait until a pairing that is running has ended: discovery during pairing gives wrong results (Nordic skips it while BOND_BONDING). */
+  private fun waitWhileBonding() {
+    val deadline = System.currentTimeMillis() + BOND_TIMEOUT_MS
+    while (device.bondState == BluetoothDevice.BOND_BONDING && System.currentTimeMillis() < deadline && connected) Thread.sleep(BOND_POLL_MS)
+  }
+
+  // ---- connection priority: fast while a job sends, balanced when idle ----
+
+  @Volatile private var fastLink = false
+  private val backToBalanced = Runnable {
+    val g = gatt
+    if (g != null && connected) {
+      try {
+        g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
+      } catch (_: Exception) {
+      }
+    }
+    fastLink = false
+  }
+
+  /**
+   * A big label sends many pieces, so the link asks for a short connection interval while it sends. Android's guidance is to use the high
+   * priority only to move a lot of data and to go back to balanced afterwards (battery). Every call keeps it fast for FAST_IDLE_MS more.
+   */
+  private fun wantFastLink(g: BluetoothGatt) {
+    main.removeCallbacks(backToBalanced)
+    if (!fastLink) {
+      try {
+        g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+        fastLink = true
+      } catch (_: Exception) {
+      }
+    }
+    main.postDelayed(backToBalanced, FAST_IDLE_MS)
+  }
+
+  /** Close at once, without waiting for the callback. Used when a newer connection to the same device replaces this one. */
+  internal fun forceClose() {
+    requestedClose = true
+    main.removeCallbacks(backToBalanced)
+    guard.abort(DISCONNECTED)
+    try {
+      gatt?.disconnect()
+    } catch (_: Exception) {
+    }
+    connected = false
+    closeGatt()
+    notifyDisconnect("requested")
+  }
+
   override fun discover(): Promise<Array<BleCharacteristic>> {
     return Promise.parallel {
       val g = gatt ?: throw BleError("E_DISCONNECTED", "The device is not connected")
       // Android keeps the result of the first discovery. A second call uses it.
       if (g.services.isNullOrEmpty()) {
+        waitWhileBonding()
+        // Android 7 and older: a bonded device needs time before discovery (Nordic: 1600 ms bonded, 300 ms not). Newer Android does not.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+          Thread.sleep(if (device.bondState == BluetoothDevice.BOND_BONDED) OLD_ANDROID_BONDED_DELAY_MS else OLD_ANDROID_DELAY_MS)
+        }
         val status = runOp("service discovery", DISCOVERY_TIMEOUT_MS, kind = GattOpGuard.Kind.DISCOVERY) { g.discoverServices() }
         if (status != BluetoothGatt.GATT_SUCCESS) {
           throw BleError("E_DISCOVERY", "Service discovery failed: ${BleSupport.gattStatusText(status)}")
@@ -328,6 +427,7 @@ class HybridBleConnection(
     val limit = timeoutMs.toLong().let { if (it > 0) it else OP_TIMEOUT_MS }
     return Promise.parallel {
       val g = gatt ?: throw BleError("E_DISCONNECTED", "The device is not connected")
+      wantFastLink(g)
       val c = find(g, serviceUuid, characteristicUuid)
       val type = if (withResponse) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
       val start = {
@@ -418,6 +518,7 @@ class HybridBleConnection(
   override fun disconnect(): Promise<Unit> {
     return Promise.parallel {
       requestedClose = true
+      main.removeCallbacks(backToBalanced)
       guard.abort(DISCONNECTED) // fail a waiting operation now; drop every later callback
       val g = gatt
       if (g != null && !disconnectNotified.get()) {
@@ -449,7 +550,11 @@ class HybridBleConnection(
       }
     }
     if (status != BluetoothGatt.GATT_SUCCESS) {
-      throw BleError("E_NOTIFY", "Notification setup failed: ${BleSupport.gattStatusText(status)}")
+      val text = BleSupport.gattStatusText(status)
+      if (BleSupport.needsPairing(status)) {
+        throw BleError("E_AUTH", "The device needs pairing ($text). Accept the system pairing dialog, then try again.")
+      }
+      throw BleError("E_NOTIFY", "Notification setup failed: $text")
     }
   }
 
@@ -473,6 +578,11 @@ class HybridBleConnection(
     private const val CLOSE_WAIT_MS = 2000L
     private const val RETRY_MS = 5L
     private const val PROBE_MS = 1000L
+    private const val BOND_TIMEOUT_MS = 30_000L
+    private const val BOND_POLL_MS = 100L
+    private const val FAST_IDLE_MS = 5000L
+    private const val OLD_ANDROID_DELAY_MS = 300L
+    private const val OLD_ANDROID_BONDED_DELAY_MS = 1600L
     private const val DISCONNECTED = -1
     private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
   }

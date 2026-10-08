@@ -31,6 +31,22 @@ export interface BleConnection extends HybridObject<{ android: 'kotlin'; ios: 's
    */
   requestMtu(mtu: number): Promise<number>
 
+  /**
+   * The pairing state of the device: `none`, `bonding` or `bonded`.
+   * Android: `BluetoothDevice.getBondState()`.
+   * iOS: always `unknown`. CoreBluetooth has no pairing API and does not say whether a device is paired.
+   */
+  readonly bondState: string
+
+  /**
+   * Pair with the device and wait for the result, at most `timeoutMs`. Resolves true when the device is bonded.
+   * Call it when an operation failed with `[E_AUTH]` (the device wants an encrypted link). Android: `createBond()`, then waits for
+   * `ACTION_BOND_STATE_CHANGED`. The phone shows its pairing dialog. Some phones (Xiaomi, Samsung) only start pairing when the app asks.
+   * iOS: resolves true at once. iOS pairs by itself, with its own dialog, at the first operation that needs it; the caller then does that
+   * operation again. Rejects with `[E_AUTH]` when pairing could not start.
+   */
+  bond(timeoutMs: number): Promise<boolean>
+
   /** Find all services and characteristics, with their properties. */
   discover(): Promise<BleCharacteristic[]>
 

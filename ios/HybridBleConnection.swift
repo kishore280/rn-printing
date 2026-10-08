@@ -8,11 +8,16 @@ private final class WriteJob {
   let data: Data
   let withResponse: Bool
   let settle: Settle<Void>
+  let limitMs: Double
+  /// The write was sent and waits for its response (with response only).
   var started = false
-  init(characteristic: CBCharacteristic, data: Data, withResponse: Bool, settle: Settle<Void>) {
+  /// The job reached the head of the queue. Its time limit runs from here, not from the call.
+  var began = false
+  init(characteristic: CBCharacteristic, data: Data, withResponse: Bool, limitMs: Double, settle: Settle<Void>) {
     self.characteristic = characteristic
     self.data = data
     self.withResponse = withResponse
+    self.limitMs = limitMs
     self.settle = settle
   }
 }
@@ -57,6 +62,8 @@ class HybridBleConnection: HybridBleConnectionSpec {
   private var discovery: Settle<[BleCharacteristic]>?
   private var servicesToDiscover = 0
   private var writes: [WriteJob] = []
+  /// Responses still owed to writes that timed out. CoreBluetooth answers in order, so the next didWrite is theirs.
+  private var staleResponses = 0
   private var notifyWaiters: [CBCharacteristic: Settle<Void>] = [:]
   private var subscribers: [String: (ArrayBuffer) -> Void] = [:]
   private var readWaiters: [CBCharacteristic: Settle<ArrayBuffer>] = [:]
@@ -91,8 +98,21 @@ class HybridBleConnection: HybridBleConnectionSpec {
     return Promise<Double>.resolved(withResult: self.mtu)
   }
 
+  /// A write with response may be larger (iOS uses long writes), but a printer that takes small packets may not take them.
+  /// Use the smaller of the two, so one piece size is safe in both modes (Apple: maximumWriteValueLength(for:)).
   func maxWriteLength(withResponse: Bool) throws -> Double {
-    return Double(peripheral.maximumWriteValueLength(for: withResponse ? .withResponse : .withoutResponse))
+    let without = peripheral.maximumWriteValueLength(for: .withoutResponse)
+    if !withResponse { return Double(without) }
+    return Double(min(peripheral.maximumWriteValueLength(for: .withResponse), without))
+  }
+
+  /// iOS has no API to pair. The system pairs by itself when a read, write or subscribe needs encryption
+  /// (and shows its own dialog). A failure comes back as an authentication error, which BleSupport.mapError maps to E_AUTH.
+  var bondState: String { return "unknown" }
+
+  func bond(timeoutMs: Double) throws -> Promise<Bool> {
+    // Nothing to start. The caller then repeats its operation, and iOS asks the user to pair if it must.
+    return Promise<Bool>.resolved(withResult: true)
   }
 
   func discover() throws -> Promise<[BleCharacteristic]> {
@@ -126,16 +146,10 @@ class HybridBleConnection: HybridBleConnectionSpec {
     queue.async {
       do {
         let characteristic = try self.find(serviceUuid, characteristicUuid)
-        let job = WriteJob(characteristic: characteristic, data: bytes, withResponse: withResponse, settle: settle)
+        guard self.connected else { throw bleError("E_DISCONNECTED", "The device is not connected") }
+        let job = WriteJob(characteristic: characteristic, data: bytes, withResponse: withResponse, limitMs: limit, settle: settle)
         self.writes.append(job)
         self.pump()
-        self.queue.asyncAfter(deadline: .now() + limit / 1000.0) {
-          if let index = self.writes.firstIndex(where: { $0 === job }) {
-            self.writes.remove(at: index)
-            settle.reject(bleError("E_TIMEOUT", "write timed out after \(Int(limit)) ms"))
-            self.pump()
-          }
-        }
       } catch {
         settle.reject(error)
       }
@@ -228,12 +242,13 @@ class HybridBleConnection: HybridBleConnectionSpec {
   func handleDisconnect(reason: String) {
     let wasConnected = connected
     connected = false
-    central.forget(peripheral)
+    central.forget(self, peripheral)
     let error = bleError("E_DISCONNECTED", "The device disconnected: \(reason)")
     discovery?.reject(error)
     discovery = nil
     let jobs = writes
     writes.removeAll()
+    staleResponses = 0
     for job in jobs { job.settle.reject(error) }
     let waiting = notifyWaiters
     notifyWaiters.removeAll()
@@ -295,6 +310,11 @@ class HybridBleConnection: HybridBleConnectionSpec {
   }
 
   func didWrite(_ characteristic: CBCharacteristic, error: Error?) {
+    // The answer of a write that already timed out. CoreBluetooth answers in order, so it comes first.
+    if staleResponses > 0 {
+      staleResponses -= 1
+      return
+    }
     guard let job = writes.first, job.started, job.withResponse, job.characteristic === characteristic else { return }
     writes.removeFirst()
     if let error = error {
@@ -307,7 +327,12 @@ class HybridBleConnection: HybridBleConnectionSpec {
 
   /// Start the first queued write. Without response, wait until CoreBluetooth has room (`canSendWriteWithoutResponse`).
   func pump() {
-    guard connected, let job = writes.first, !job.started else { return }
+    guard connected, let job = writes.first else { return }
+    if !job.began {
+      job.began = true
+      armTimer(job)
+    }
+    guard !job.started else { return }
     if job.withResponse {
       job.started = true
       peripheral.writeValue(job.data, for: job.characteristic, type: .withResponse)
@@ -317,7 +342,20 @@ class HybridBleConnection: HybridBleConnectionSpec {
       job.settle.resolve(())
       pump()
     }
-    // Otherwise `peripheralIsReady(toSendWriteWithoutResponse:)` calls pump() again.
+    // Otherwise `peripheralIsReady(toSendWriteWithoutResponse:)` calls pump() again. Apple's forum says the callback can be
+    // missing while the app is in the background, so the job's own time limit (armTimer) ends a wait that never ends.
+  }
+
+  /// The time limit of a job runs from the moment it reaches the head of the queue. It covers both a missing response
+  /// and a missing `peripheralIsReady`. A job behind a slow one does not lose its time waiting.
+  private func armTimer(_ job: WriteJob) {
+    queue.asyncAfter(deadline: .now() + job.limitMs / 1000.0) { [weak self] in
+      guard let self = self, let index = self.writes.firstIndex(where: { $0 === job }) else { return }
+      self.writes.remove(at: index)
+      if job.started && job.withResponse { self.staleResponses += 1 }
+      job.settle.reject(bleError("E_TIMEOUT", "write timed out after \(Int(job.limitMs)) ms"))
+      self.pump()
+    }
   }
 
   func didUpdateNotificationState(_ characteristic: CBCharacteristic, error: Error?) {

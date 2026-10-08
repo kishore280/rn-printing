@@ -164,8 +164,11 @@ When Bluetooth is off, ask for it with `await BluetoothLE.requestEnable()`: on A
 ### Pairing (bonding)
 
 The package does not store or send a PIN. If the printer needs an encrypted link, the operating system asks the user.
-When a write fails for this reason the error code is `E_AUTH`. The user accepts the system dialog and prints again.
 The Classic PIN of a printer does not apply to BLE.
+
+- **Android:** when an operation fails because the printer wants pairing (GATT status 5, 15 or 137), the package starts the bond itself (`createBond()`), waits for the result, and repeats the operation once. It does this once per connection. If the user says no, you get `E_AUTH` ("The device was not paired…"). That error is not retried. Options of `BluetoothLETransport`: `bond: 'auto' | 'never'` (default `'auto'`) and `bondTimeoutMs` (default 30000). `diagnostics().bondState` shows `none`, `bonding` or `bonded`.
+- **iOS:** there is no pairing API. iOS pairs by itself at the first operation that needs it, and shows its own dialog. `bondState` is always `unknown`. A failure is `E_AUTH` too.
+- Not tested on the TVS LP 46 Dlite. It may not need pairing at all.
 
 ### Error codes
 

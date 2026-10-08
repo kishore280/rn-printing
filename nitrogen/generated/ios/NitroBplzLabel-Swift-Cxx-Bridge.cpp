@@ -31,6 +31,14 @@ namespace margelo::nitro::bplzlabel::bridge::swift {
     };
   }
   
+  // pragma MARK: std::function<void(bool /* result */)>
+  Func_void_bool create_Func_void_bool(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_bool::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](bool result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
   // pragma MARK: std::function<void(const std::vector<BleCharacteristic>& /* result */)>
   Func_void_std__vector_BleCharacteristic_ create_Func_void_std__vector_BleCharacteristic_(void* NON_NULL swiftClosureWrapper) noexcept {
     auto swiftClosure = NitroBplzLabel::Func_void_std__vector_BleCharacteristic_::fromUnsafe(swiftClosureWrapper);
@@ -76,14 +84,6 @@ namespace margelo::nitro::bplzlabel::bridge::swift {
     auto swiftClosure = NitroBplzLabel::Func_void_std__string::fromUnsafe(swiftClosureWrapper);
     return [swiftClosure = std::move(swiftClosure)](const std::string& state) mutable -> void {
       swiftClosure.call(state);
-    };
-  }
-  
-  // pragma MARK: std::function<void(bool /* result */)>
-  Func_void_bool create_Func_void_bool(void* NON_NULL swiftClosureWrapper) noexcept {
-    auto swiftClosure = NitroBplzLabel::Func_void_bool::fromUnsafe(swiftClosureWrapper);
-    return [swiftClosure = std::move(swiftClosure)](bool result) mutable -> void {
-      swiftClosure.call(result);
     };
   }
   

@@ -18,7 +18,9 @@ namespace margelo::nitro::bplzlabel {
       prototype.registerHybridGetter("isConnected", &HybridBleConnectionSpec::getIsConnected);
       prototype.registerHybridGetter("mtu", &HybridBleConnectionSpec::getMtu);
       prototype.registerHybridGetter("noResponseCallback", &HybridBleConnectionSpec::getNoResponseCallback);
+      prototype.registerHybridGetter("bondState", &HybridBleConnectionSpec::getBondState);
       prototype.registerHybridMethod("requestMtu", &HybridBleConnectionSpec::requestMtu);
+      prototype.registerHybridMethod("bond", &HybridBleConnectionSpec::bond);
       prototype.registerHybridMethod("discover", &HybridBleConnectionSpec::discover);
       prototype.registerHybridMethod("maxWriteLength", &HybridBleConnectionSpec::maxWriteLength);
       prototype.registerHybridMethod("write", &HybridBleConnectionSpec::write);

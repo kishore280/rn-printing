@@ -148,6 +148,8 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | Native BLE (Kotlin) | Compiled with kotlinc against the Android API jar. Not run on a device. |
 | Native BLE (Swift / CoreBluetooth) | NOT compiled, NOT run. No Swift toolchain here. |
 | BLE `read` (GATT inspector) | TypeScript: unit-tested with a fake. Kotlin: compiled only. Swift: NOT compiled. Not run on a device. |
+| BLE pairing (bonding) | TypeScript: unit-tested with a fake link (`withBond`, 8 tests). Kotlin: compiled (`createBond`, bond receiver). Swift: no pairing API on iOS; `bond()` is a stub. Not run on a device or the printer. |
+| iOS round 3 (write timer, stale responses, connect attempts, piece size, permission wait) | Swift written from Apple's docs: NOT compiled, NOT run. The permission wait is unit-tested in TypeScript. See `docs/BLE-HARDENING.md` section 8. |
 | BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |

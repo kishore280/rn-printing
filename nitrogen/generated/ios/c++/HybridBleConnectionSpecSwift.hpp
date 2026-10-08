@@ -85,11 +85,23 @@ namespace margelo::nitro::bplzlabel {
       auto __result = _swiftPart.getNoResponseCallback();
       return __result;
     }
+    inline std::string getBondState() noexcept override {
+      auto __result = _swiftPart.getBondState();
+      return __result;
+    }
 
   public:
     // Methods
     inline std::shared_ptr<Promise<double>> requestMtu(double mtu) override {
       auto __result = _swiftPart.requestMtu(std::forward<decltype(mtu)>(mtu));
+      if (__result.hasError()) [[unlikely]] {
+        std::rethrow_exception(__result.error());
+      }
+      auto __value = std::move(__result.value());
+      return __value;
+    }
+    inline std::shared_ptr<Promise<bool>> bond(double timeoutMs) override {
+      auto __result = _swiftPart.bond(std::forward<decltype(timeoutMs)>(timeoutMs));
       if (__result.hasError()) [[unlikely]] {
         std::rethrow_exception(__result.error());
       }

@@ -46,6 +46,8 @@ interface FakeLinkOptions {
   discoverImpl?: () => Promise<BleCharacteristic[]>;
   noResponseCallback?: string;
   readImpl?: (s: string, c: string) => Promise<Uint8Array>;
+  subscribeImpl?: (call: number) => Promise<void>;
+  bondImpl?: (link: { connected: boolean }) => Promise<boolean>;
 }
 
 class FakeLink {
@@ -55,6 +57,8 @@ class FakeLink {
   subscribed: string[] = [];
   unsubscribed: string[] = [];
   disconnects = 0;
+  bonds = 0;
+  subscribeCalls = 0;
   push: ((d: ArrayBuffer) => void) | null = null;
   inFlight = 0;
   maxInFlight = 0;
@@ -87,7 +91,13 @@ class FakeLink {
           self.inFlight--;
         }
       },
+      bondState: 'none',
+      bond: async () => {
+        self.bonds++;
+        return self.opts.bondImpl ? self.opts.bondImpl(self) : true;
+      },
       subscribe: async (s: string, c: string, onData: (d: ArrayBuffer) => void) => {
+        if (self.opts.subscribeImpl) await self.opts.subscribeImpl(++self.subscribeCalls);
         self.subscribed.push(`${s}/${c}`);
         self.push = onData;
       },
@@ -1349,5 +1359,126 @@ describe('BluetoothLETransport: soak (150 cycles of connect, print, disconnect, 
     off();
     await t.disconnect();
     expect(t.connectionState).toBe('disconnected');
+  });
+});
+
+
+// ---- bonding (pairing): only when the device asks, once for each connection, then the operation again ----
+
+describe('BluetoothLETransport: bonding', () => {
+  const auth = () => new Error('[E_AUTH] The device needs pairing (GATT status 5). Accept the system pairing dialog, then try again.');
+
+  it('pairs when the first piece is refused for pairing, then sends the same piece again, once', async () => {
+    let first = true;
+    const fake = fakeNative({ mtu: 23, writeImpl: async () => { if (first) { first = false; throw auth(); } } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await t.write(bytes(25));
+    const link = fake.links[0];
+    expect(link?.bonds).toBe(1);
+    // 25 bytes in pieces of 20: the refused piece is sent again, so 3 writes reach the link (refused, 20, 5).
+    expect(link?.writes.map((w) => w.bytes.length)).toEqual([20, 20, 5]);
+    expect(t.connectionState).toBe('connected');
+  });
+
+  it('does not pair again on the same connection when the device refuses a second time', async () => {
+    const fake = fakeNative({ writeImpl: async () => { throw auth(); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const error = await t.write(bytes(10)).catch((e: TransportError) => e);
+    expect((error as TransportError).code).toBe('E_AUTH');
+    expect(fake.links[0]?.bonds).toBe(1);
+  });
+
+  it('says E_AUTH, with nothing sent, when the person does not accept the pairing', async () => {
+    const fake = fakeNative({ writeImpl: async () => { throw auth(); }, bondImpl: async () => false });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const error = (await t.write(bytes(10)).catch((e: TransportError) => e)) as TransportError;
+    expect(error.code).toBe('E_AUTH');
+    expect(error.nothingSent).toBe(true);
+    expect(fake.links[0]?.bonds).toBe(1);
+  });
+
+  it('with bond set to never, reports E_AUTH and does not pair', async () => {
+    const fake = fakeNative({ writeImpl: async () => { throw auth(); } });
+    const t = new BluetoothLETransport('dev-1', { bond: 'never' });
+    await t.connect();
+    await expect(t.write(bytes(10))).rejects.toMatchObject({ code: 'E_AUTH' });
+    expect(fake.links[0]?.bonds).toBe(0);
+  });
+
+  it('pairs during connect when the notification setup needs it, and subscribes again', async () => {
+    const fake = fakeNative({ subscribeImpl: async (call) => { if (call === 1) throw auth(); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const link = fake.links[0];
+    expect(link?.bonds).toBe(1);
+    expect(link?.subscribed).toEqual([`${SERIAL_SVC}/${SERIAL_RX}`]);
+  });
+
+  it('reports a link that closed after pairing as a lost link (the caller connects again)', async () => {
+    let first = true;
+    const fake = fakeNative({
+      writeImpl: async () => { if (first) { first = false; throw auth(); } },
+      bondImpl: async (link) => { link.connected = false; return true; },
+    });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await expect(t.write(bytes(10))).rejects.toMatchObject({ code: 'E_DISCONNECTED' });
+    expect(fake.links[0]?.bonds).toBe(1);
+  });
+
+  it('leaves other errors alone: a plain write failure never starts pairing', async () => {
+    const fake = fakeNative({ writeImpl: async () => { throw new Error('[E_WRITE] status 133'); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    await expect(t.write(bytes(10))).rejects.toMatchObject({ code: 'E_WRITE' });
+    expect(fake.links[0]?.bonds).toBe(0);
+  });
+
+  it('shows the pairing state in the diagnostics', async () => {
+    fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    expect(t.diagnostics().bondState).toBeNull();
+    await t.connect();
+    expect(t.diagnostics().bondState).toBe('none');
+  });
+});
+
+describe('iOS permission wait', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const rn = require('react-native') as { Platform: { OS: string } };
+  afterEach(() => { rn.Platform.OS = 'android'; });
+
+  it('waits for the first real state, because iOS reports unknown until the user answers', async () => {
+    rn.Platform.OS = 'ios';
+    const fake = fakeNative({ state: 'unknown' });
+    const answer = BluetoothLE.requestPermissions();
+    let settled = false;
+    void answer.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    fake.emitState('resetting');
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    fake.emitState('on');
+    await expect(answer).resolves.toBe(true);
+  });
+
+  it('answers false when the user says no', async () => {
+    rn.Platform.OS = 'ios';
+    const fake = fakeNative({ state: 'unknown' });
+    const answer = BluetoothLE.requestPermissions();
+    fake.emitState('unauthorized');
+    await expect(answer).resolves.toBe(false);
+  });
+
+  it('answers at once when the state is already known', async () => {
+    rn.Platform.OS = 'ios';
+    fakeNative({ state: 'off' });
+    await expect(BluetoothLE.requestPermissions()).resolves.toBe(true);
+    fakeNative({ state: 'unauthorized' });
+    await expect(BluetoothLE.requestPermissions()).resolves.toBe(false);
   });
 });

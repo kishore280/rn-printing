@@ -43,11 +43,19 @@ abstract class HybridBleConnectionSpec: HybridObject() {
   @get:DoNotStrip
   @get:Keep
   abstract val noResponseCallback: String
+  
+  @get:DoNotStrip
+  @get:Keep
+  abstract val bondState: String
 
   // Methods
   @DoNotStrip
   @Keep
   abstract fun requestMtu(mtu: Double): Promise<Double>
+  
+  @DoNotStrip
+  @Keep
+  abstract fun bond(timeoutMs: Double): Promise<Boolean>
   
   @DoNotStrip
   @Keep
