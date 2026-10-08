@@ -69,6 +69,10 @@ Read this file before you change the code. It tells you where things are, how th
 | `docs/BLE-HARDENING.md` | What mature BLE projects do (Nordic, Apple, Zebra, Epson, ble-plx, flutter_blue_plus), the audit of our BLE code, what is fixed and what is open. Read it before you change the BLE code. |
 | `docs/REFERENCES.md` | Verification record. What was checked, what was only compiled, what is unchecked. |
 
+## Releases
+
+A release is a tag `vX.Y.Z` of `main`, made by the workflow `.github/workflows/release.yml` (Actions → Release → Run workflow, input: the version of `package.json`). An agent session cannot push tags (the remote refuses), so it starts that workflow instead. Apps pin the package by tag (`...rn-printing.git#v0.2.0`). To release: raise `version` in `package.json`, merge to `main`, run the workflow.
+
 ## Commands
 
 ```sh

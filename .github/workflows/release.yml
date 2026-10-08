@@ -1,0 +1,53 @@
+# Makes a version tag and a GitHub release for the package.
+# It runs only when started by hand: GitHub → Actions → "Release" → Run workflow (or from an agent session).
+# The version must be the one in package.json, and the tag must not exist yet.
+# Apps then pin the package by version: "react-native-bplz-label-printer": "git+https://github.com/kishore280/rn-printing.git#v0.2.0".
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without "v", the same as "version" in package.json (for example 0.2.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Check the version
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Version must look like 1.2.3 (no leading v)."; exit 1
+          fi
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$pkg" != "$VERSION" ]; then
+            echo "::error::package.json says $pkg, not $VERSION. Change it, merge to main, and run again."; exit 1
+          fi
+          if gh release view "v$VERSION" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::error::v$VERSION exists already."; exit 1
+          fi
+
+      # `gh release create` makes the tag on the checked-out commit of main.
+      - name: Create the tag and the release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "v$VERSION" --target "$(git rev-parse HEAD)" \
+            --title "react-native-bplz-label-printer $VERSION" --generate-notes
+          echo "### Released v$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "Commit: \`$(git rev-parse HEAD)\`" >> "$GITHUB_STEP_SUMMARY"
