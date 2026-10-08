@@ -1173,3 +1173,105 @@ describe('BluetoothLETransport: readGatt', () => {
     expect(rows?.some((r) => r.value !== undefined)).toBe(true);
   });
 });
+
+// ---- hardening: overlap, stale events, state on LabelPrinter (from the BLE audit) ----
+
+describe('BluetoothLETransport: a connect that is overtaken', () => {
+  it('rejects, closes its link and stays disconnected when disconnect() comes while it discovers', async () => {
+    let release: (() => void) | null = null;
+    const fake = fakeNative({
+      discoverImpl: () => new Promise((resolve) => { release = () => resolve(serialGatt()); }),
+    });
+    const t = new BluetoothLETransport('dev-1');
+    const connecting = t.connect();
+    await new Promise((r) => setTimeout(r, 5));
+    await t.disconnect();
+    release?.();
+    await expect(connecting).rejects.toMatchObject({ code: 'E_DISCONNECTED' });
+    expect(fake.links[0]?.disconnects).toBeGreaterThanOrEqual(1);
+    expect(t.connectionState).toBe('disconnected');
+    expect(await t.isConnected()).toBe(false);
+  });
+
+  it('an older failed connect does not wipe the link of the newer one', async () => {
+    let release: (() => void) | null = null;
+    let first = true;
+    const fake = fakeNative({
+      discoverImpl: () => {
+        if (first) {
+          first = false;
+          return new Promise((resolve) => { release = () => resolve(serialGatt()); });
+        }
+        return Promise.resolve(serialGatt());
+      },
+    });
+    const t = new BluetoothLETransport('dev-1');
+    const older = t.connect();
+    await new Promise((r) => setTimeout(r, 5));
+    // A second connect() disconnects the first one, then opens a new link.
+    const newer = t.connect();
+    await new Promise((r) => setTimeout(r, 20));
+    release?.();
+    await expect(older).rejects.toMatchObject({ code: 'E_DISCONNECTED' });
+    await newer;
+    expect(t.connectionState).toBe('connected');
+    expect(await t.isConnected()).toBe(true);
+    expect(fake.links.length).toBe(2);
+  });
+
+  it('does not report connected when the link was lost while it opened', async () => {
+    const fake = fakeNative({
+      discoverImpl: async () => {
+        fake.links[0]?.lost('GATT status 8');
+        return serialGatt();
+      },
+    });
+    const t = new BluetoothLETransport('dev-1');
+    await expect(t.connect()).rejects.toMatchObject({ code: 'E_DISCONNECTED' });
+    expect(t.connectionState).toBe('disconnected');
+  });
+});
+
+describe('BluetoothLETransport: stale notifications', () => {
+  it('drops a notification that an old link sends after a reconnect', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const oldPush = fake.links[0]?.push;
+    await t.reconnect();
+    oldPush?.(new Uint8Array([1, 2, 3]).buffer);
+    await expect(t.read({ timeoutMs: 30, idleMs: 10 })).resolves.toHaveLength(0);
+    fake.links[1]?.push?.(new Uint8Array([9]).buffer);
+    await expect(t.read({ timeoutMs: 100, idleMs: 10 })).resolves.toEqual(new Uint8Array([9]));
+  });
+});
+
+describe('LabelPrinter: the link state', () => {
+  it('shows the transport state and its changes without a second reference to the transport', async () => {
+    fakeNative();
+    const transport = new BluetoothLETransport('dev-1');
+    const printer = new LabelPrinter(transport);
+    const seen: string[] = [];
+    const off = printer.onConnectionState((e) => seen.push(e.state));
+    expect(printer.connectionState).toBe('disconnected');
+    await printer.connect();
+    expect(printer.connectionState).toBe('connected');
+    await printer.disconnect();
+    off();
+    expect(seen).toEqual(['connecting', 'connected', 'disconnecting', 'disconnected']);
+  });
+
+  it('says null and gives a harmless unsubscribe when the transport cannot tell', () => {
+    const plain = {
+      connect: async () => undefined,
+      disconnect: async () => undefined,
+      isConnected: async () => false,
+      write: async () => undefined,
+      read: async () => new Uint8Array(),
+    };
+    const printer = new LabelPrinter(plain);
+    expect(printer.connectionState).toBeNull();
+    expect(() => printer.onConnectionState(() => undefined)()).not.toThrow();
+    expect(() => printer.cancel()).not.toThrow();
+  });
+});

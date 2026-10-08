@@ -52,6 +52,30 @@ private fun testC() {
   check("C: no new operation can start on a closed link", refused)
 }
 
+private fun testMtuKind() {
+  // Android 14 starts its own MTU exchange: its callback must not complete a waiting discovery or write
+  val g = GattOpGuard()
+  val d = g.begin(GattOpGuard.Kind.DISCOVERY)
+  check("K: an MTU callback does not complete a discovery", !g.complete(0, GattOpGuard.Kind.MTU) && !done(d))
+  check("K: the discovery callback completes it", g.complete(0, GattOpGuard.Kind.DISCOVERY) && done(d))
+  val w = g.begin(GattOpGuard.Kind.WRITE)
+  check("K: an MTU callback does not complete a write", !g.complete(0, GattOpGuard.Kind.MTU) && !done(w))
+  check("K: the write callback completes it", g.complete(0, GattOpGuard.Kind.WRITE) && done(w))
+  val m = g.begin(GattOpGuard.Kind.MTU)
+  check("K: our own MTU request is completed by the MTU callback", g.complete(0, GattOpGuard.Kind.MTU) && done(m))
+}
+
+private fun testOwedKind() {
+  // a given-up discovery is owed one DISCOVERY callback; an unsolicited MTU callback must not use it up
+  val g = GattOpGuard()
+  val a = g.begin(GattOpGuard.Kind.DISCOVERY)
+  g.abandon(a, accepted = true)
+  val b = g.begin(GattOpGuard.Kind.READ)
+  check("O: an MTU callback is dropped and keeps the debt", !g.complete(0, GattOpGuard.Kind.MTU) && !done(b))
+  check("O: the late discovery callback is dropped", !g.complete(0, GattOpGuard.Kind.DISCOVERY) && !done(b))
+  check("O: the read callback completes the read", g.complete(0, GattOpGuard.Kind.READ) && done(b))
+}
+
 private fun testD() {
   // normal write callback -> operation completes exactly once
   val g = GattOpGuard()
@@ -144,6 +168,6 @@ private fun testProbeThenDisconnect() {
 }
 
 fun main() {
-  testA(); testB(); testC(); testD(); testE(); testMore(); testProbe(); testProbeNeverCallsBack(); testProbeThenDisconnect()
+  testA(); testB(); testC(); testD(); testE(); testMore(); testProbe(); testProbeNeverCallsBack(); testProbeThenDisconnect(); testMtuKind(); testOwedKind()
   println("GattOpGuard: $passed checks passed")
 }

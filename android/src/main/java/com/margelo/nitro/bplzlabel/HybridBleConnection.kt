@@ -125,9 +125,11 @@ class HybridBleConnection(
         val wasConnected = connected
         connected = false
         guard.abort(DISCONNECTED)
-        closeGatt()
+        closeGatt(g)
         if (!wasConnected) {
-          settleConnect(BleError("E_CONNECT", "Cannot connect to ${device.address}: ${BleSupport.gattStatusText(status)}"))
+          // A printer that wants pairing must not be retried like a radio failure: the person has to accept the system dialog.
+          val code = if (BleSupport.needsPairing(status)) "E_AUTH" else "E_CONNECT"
+          settleConnect(BleError(code, "Cannot connect to ${device.address}: ${BleSupport.gattStatusText(status)}"))
         }
         val reason = when {
           requestedClose -> "requested"
@@ -139,12 +141,12 @@ class HybridBleConnection(
     }
 
     override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
-      guard.complete(status)
+      guard.complete(status, GattOpGuard.Kind.DISCOVERY)
     }
 
     override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
       if (status == BluetoothGatt.GATT_SUCCESS) mtuValue = mtu
-      guard.complete(status)
+      guard.complete(status, GattOpGuard.Kind.MTU)
     }
 
     override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
@@ -154,7 +156,7 @@ class HybridBleConnection(
     // Android 13 and newer call this one.
     override fun onCharacteristicRead(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
       readValue = value
-      guard.complete(status)
+      guard.complete(status, GattOpGuard.Kind.READ)
     }
 
     // Android 12 and older call this one.
@@ -162,12 +164,12 @@ class HybridBleConnection(
     override fun onCharacteristicRead(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
         readValue = characteristic.value ?: ByteArray(0)
-        guard.complete(status)
+        guard.complete(status, GattOpGuard.Kind.READ)
       }
     }
 
     override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-      guard.complete(status)
+      guard.complete(status, GattOpGuard.Kind.DESCRIPTOR)
     }
 
     // Android 13 and newer call this one.
@@ -194,8 +196,9 @@ class HybridBleConnection(
     if (disconnectNotified.compareAndSet(false, true)) onDisconnect(reason)
   }
 
-  private fun closeGatt() {
-    val g = gatt ?: return
+  /** Close the GATT client. `from` is the object a callback gave us: a failure can arrive before `gatt` is set, and then the field is still null. */
+  private fun closeGatt(from: BluetoothGatt? = null) {
+    val g = from ?: gatt ?: return
     try {
       g.close()
     } catch (_: Exception) {
@@ -217,6 +220,7 @@ class HybridBleConnection(
     retryRefusal: Boolean = true,
     waitForCallback: Boolean = true,
     probe: Boolean = false,
+    kind: GattOpGuard.Kind = GattOpGuard.Kind.WRITE,
     start: () -> Boolean,
   ): Int {
     synchronized(opLock) {
@@ -233,7 +237,7 @@ class HybridBleConnection(
           continue
         }
         val op = try {
-          guard.begin() // this operation is now the only one that a callback can complete
+          guard.begin(kind) // this operation is now the only one that a callback can complete
         } catch (e: IllegalStateException) {
           throw BleError("E_DISCONNECTED", "${e.message} ($what)")
         }
@@ -270,7 +274,7 @@ class HybridBleConnection(
     val wanted = mtu.toInt().coerceIn(DEFAULT_MTU, MAX_MTU)
     return Promise.parallel {
       val g = gatt ?: throw BleError("E_DISCONNECTED", "The device is not connected")
-      runOp("MTU request", OP_TIMEOUT_MS, retryRefusal = false) { g.requestMtu(wanted) }
+      runOp("MTU request", OP_TIMEOUT_MS, retryRefusal = false, kind = GattOpGuard.Kind.MTU) { g.requestMtu(wanted) }
       mtuValue.toDouble()
     }
   }
@@ -280,7 +284,7 @@ class HybridBleConnection(
       val g = gatt ?: throw BleError("E_DISCONNECTED", "The device is not connected")
       // Android keeps the result of the first discovery. A second call uses it.
       if (g.services.isNullOrEmpty()) {
-        val status = runOp("service discovery", DISCOVERY_TIMEOUT_MS) { g.discoverServices() }
+        val status = runOp("service discovery", DISCOVERY_TIMEOUT_MS, kind = GattOpGuard.Kind.DISCOVERY) { g.discoverServices() }
         if (status != BluetoothGatt.GATT_SUCCESS) {
           throw BleError("E_DISCOVERY", "Service discovery failed: ${BleSupport.gattStatusText(status)}")
         }
@@ -367,7 +371,7 @@ class HybridBleConnection(
         throw BleError("E_NOT_READABLE", "The characteristic cannot be read")
       }
       readValue = null
-      val status = runOp("read", OP_TIMEOUT_MS) { g.readCharacteristic(c) }
+      val status = runOp("read", OP_TIMEOUT_MS, kind = GattOpGuard.Kind.READ) { g.readCharacteristic(c) }
       if (status != BluetoothGatt.GATT_SUCCESS) {
         val text = BleSupport.gattStatusText(status)
         if (BleSupport.needsPairing(status)) {
@@ -436,7 +440,7 @@ class HybridBleConnection(
 
   private fun writeCccd(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
     val cccd = c.getDescriptor(CCCD) ?: throw BleError("E_NOTIFY", "The characteristic has no notification descriptor")
-    val status = runOp("notification setup", OP_TIMEOUT_MS) {
+    val status = runOp("notification setup", OP_TIMEOUT_MS, kind = GattOpGuard.Kind.DESCRIPTOR) {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         g.writeDescriptor(cccd, value) == 0 // BluetoothStatusCodes.SUCCESS
       } else {

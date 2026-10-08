@@ -63,7 +63,7 @@ export type { BplaTextOptions, BplaBarcodeOptions, BplaRotation } from './bpla';
 export { parseHostStatus, parseExtendedStatus, parseHostIdentification } from './status';
 export type { PrinterStatus, ExtendedStatus, PrinterIdentity } from './status';
 
-export type { Transport, ReadOptions } from './transport';
+export type { Transport, ReadOptions, LinkState, LinkEvent } from './transport';
 export { BluetoothClassic, BluetoothClassicTransport } from './transports/bluetoothClassic';
 export type { PairedDevice, BluetoothClassicOptions } from './transports/bluetoothClassic';
 export { BluetoothLE, BluetoothLETransport, bleFilters } from './transports/bluetoothLE';

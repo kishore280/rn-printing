@@ -7,6 +7,18 @@ export interface ReadOptions {
   maxBytes?: number;
 }
 
+/** Life cycle of a link: `connecting` > `connected` > `writing` > `connected` ... > `disconnecting` > `disconnected`. */
+export type LinkState = 'connecting' | 'connected' | 'writing' | 'disconnecting' | 'disconnected';
+
+/** One change of the link. A lost link, a failed write and a failed connect end in `disconnected`, with the reason. */
+export interface LinkEvent {
+  state: LinkState;
+  /** Why the link closed. Set when `state` is 'disconnected'. 'requested' = we closed it. */
+  reason?: string | undefined;
+  /** The error that ended the link, when there was one. */
+  error?: Error | undefined;
+}
+
 /** A byte pipe to the printer. */
 export interface Transport {
   connect(): Promise<void>;
@@ -14,4 +26,10 @@ export interface Transport {
   isConnected(): Promise<boolean>;
   write(data: Uint8Array): Promise<void>;
   read(options?: ReadOptions): Promise<Uint8Array>;
+  /** Optional. The state of the link now. A transport that cannot tell leaves it out. */
+  readonly connectionState?: LinkState;
+  /** Optional. Be told when the link changes. Returns a function that removes the listener. */
+  onConnectionState?(listener: (event: LinkEvent) => void): () => void;
+  /** Optional. Stop the write that runs now, between two pieces. */
+  cancel?(): void;
 }

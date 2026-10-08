@@ -4,7 +4,7 @@ import { getBluetoothLE, toArrayBuffer } from '../native';
 import type { BleConnection } from '../specs/BleConnection.nitro';
 import type { BleScanResult } from '../specs/BleScanResult';
 import type { BluetoothLE as NativeBluetoothLE } from '../specs/BluetoothLE.nitro';
-import type { ReadOptions, Transport } from '../transport';
+import type { LinkEvent, LinkState, ReadOptions, Transport } from '../transport';
 import {
   BleGattCharacteristic,
   BleSelection,
@@ -71,12 +71,9 @@ export interface BleConnectOptions {
  * `connecting` > `connected` > `writing` > `connected` (write completed) ... > `disconnecting` > `disconnected`.
  * A failed write, a timeout, a cancel and a lost link all end in `disconnected`, with `reason` and `error`.
  */
-export type BleConnectionState = 'connecting' | 'connected' | 'writing' | 'disconnecting' | 'disconnected';
+export type BleConnectionState = LinkState;
 
-export interface BleConnectionStateEvent {
-  state: BleConnectionState;
-  /** Why the link closed. Set when `state` is 'disconnected'. */
-  reason?: string | undefined;
+export interface BleConnectionStateEvent extends LinkEvent {
   /** The error that ended the link, when there was one (a failed write or connect). Not set for a plain disconnect or a lost link. */
   error?: TransportError | undefined;
 }
@@ -521,6 +518,8 @@ export class BluetoothLETransport implements Transport {
         mod.connect(this.deviceId, this.settings.connectTimeoutMs ?? 10000, (reason) => this.onLinkLost(gen, reason)),
         'E_CONNECT'
       );
+      // disconnect() or a newer connect() came while this one opened: this link is not wanted. Close it, touch nothing else.
+      if (gen !== this.generation) throw new TransportError('The connection was closed while it opened', 'E_DISCONNECTED');
       this.link = link;
       this.connectMs = Date.now() - t0;
 
@@ -535,7 +534,9 @@ export class BluetoothLETransport implements Transport {
       }
 
       const t1 = Date.now();
-      this.table = [...(await wrap(link.discover(), 'E_DISCOVERY'))];
+      const table = [...(await wrap(link.discover(), 'E_DISCOVERY'))];
+      if (gen !== this.generation) throw new TransportError('The connection was closed while it opened', 'E_DISCONNECTED');
+      this.table = table;
       this.discoverMs = Date.now() - t1;
       this.picked = selectCharacteristics(this.table, this.settings);
 
@@ -545,7 +546,10 @@ export class BluetoothLETransport implements Transport {
         const active = link;
         try {
           await wrap(
-            active.subscribe(serviceUuid, uuid, (data) => this.inbox.push(new Uint8Array(data))),
+            // A late notification of an old link must not land in the inbox of the next one.
+            active.subscribe(serviceUuid, uuid, (data) => {
+              if (gen === this.generation) this.inbox.push(new Uint8Array(data));
+            }),
             'E_NOTIFY'
           );
           this.unsubscribe = () => active.unsubscribe(serviceUuid, uuid);
@@ -554,14 +558,20 @@ export class BluetoothLETransport implements Transport {
           this.unsubscribe = null;
         }
       }
-      if (gen !== this.generation) throw new TransportError('The connection was closed while it opened', 'E_DISCONNECTED');
+      // The link can be lost during the steps above (the native side calls onLinkLost, which bumps nothing by itself).
+      if (gen !== this.generation || !link.isConnected) {
+        throw new TransportError('The connection was closed while it opened', 'E_DISCONNECTED');
+      }
       this.setState('connected');
     } catch (e) {
-      this.link = null;
-      this.picked = null;
+      // Only the newest connect owns the fields. An older one that failed must not wipe the newer link.
+      if (gen === this.generation) {
+        this.link = null;
+        this.picked = null;
+      }
       if (link) await link.disconnect().catch(() => undefined);
       const error = classify(e, 'E_CONNECT');
-      this.setState('disconnected', error.message, error);
+      if (gen === this.generation) this.setState('disconnected', error.message, error);
       throw error;
     }
   }

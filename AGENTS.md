@@ -64,6 +64,7 @@ Read this file before you change the code. It tells you where things are, how th
 | `docs/BLE.md` | BLE guide: setup, API, chunking, errors, troubleshooting, manual acceptance test. |
 | `docs/BPLZ-TEST-LABELS.md` | 22 small test labels and 3 status queries to send with nRF Connect, and a result table. Tests check size and syntax only. |
 | `docs/BPLZ-TEST-SHEET.md` | One test label with 12 numbered cells, sent as 9 writes with nRF Connect. The short way to test the BPLZ commands. Tests check size and syntax only. |
+| `docs/BLE-HARDENING.md` | What mature BLE projects do (Nordic, Apple, Zebra, Epson, ble-plx, flutter_blue_plus), the audit of our BLE code, what is fixed and what is open. Read it before you change the BLE code. |
 | `docs/REFERENCES.md` | Verification record. What was checked, what was only compiled, what is unchecked. |
 
 ## Commands
@@ -143,6 +144,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | Native BLE (Kotlin) | Compiled with kotlinc against the Android API jar. Not run on a device. |
 | Native BLE (Swift / CoreBluetooth) | NOT compiled, NOT run. No Swift toolchain here. |
 | BLE `read` (GATT inspector) | TypeScript: unit-tested with a fake. Kotlin: compiled only. Swift: NOT compiled. Not run on a device. |
+| BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` replies | NOT verified on the printer. |

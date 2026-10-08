@@ -10,7 +10,7 @@ import {
 } from './reconnect';
 import { zplSettings } from './zpl';
 import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
-import type { Transport } from './transport';
+import type { LinkEvent, LinkState, Transport } from './transport';
 import type { BleGattReading, BluetoothLETransport } from './transports/bluetoothLE';
 
 /** Any label builder: ZplLabel, CpclLabel or BplaLabel. */
@@ -119,6 +119,29 @@ export class LabelPrinter {
 
   isConnected(): Promise<boolean> {
     return this.transport.isConnected();
+  }
+
+  /**
+   * The state of the link now. `null` when the transport cannot tell (Classic Bluetooth, TCP). A screen reads this and
+   * `onConnectionState` instead of keeping its own reference to the transport. This is the link only: the printer's own
+   * state (paper out, head open) comes from `getStatus()`, and a silent printer is not a lost link.
+   */
+  get connectionState(): LinkState | null {
+    return this.transport.connectionState ?? null;
+  }
+
+  /**
+   * Be told when the link changes (connect, write, lost link, close). Returns a function that removes the listener.
+   * Returns a function that does nothing when the transport has no events. Pair it with a debounce in the screen:
+   * one `disconnected` can be a wobble (see the app's link-state rules).
+   */
+  onConnectionState(listener: (event: LinkEvent) => void): () => void {
+    return this.transport.onConnectionState?.(listener) ?? (() => undefined);
+  }
+
+  /** Stop the write that runs now, between two pieces. Does nothing when the transport cannot. */
+  cancel(): void {
+    this.transport.cancel?.();
   }
 
   /** Send a label from any builder, or a raw command string. */
