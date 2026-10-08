@@ -10,7 +10,8 @@ import {
 } from './reconnect';
 import { zplSettings } from './zpl';
 import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
-import type { LinkEvent, LinkState, Transport } from './transport';
+import { TransportError } from './errors';
+import type { LinkEvent, LinkState, Transport, WriteOptions } from './transport';
 import type { BleGattReading, BluetoothLETransport } from './transports/bluetoothLE';
 
 /** Any label builder: ZplLabel, CpclLabel or BplaLabel. */
@@ -91,7 +92,9 @@ export class LabelPrinter {
     } catch (e) {
       await this.transport.disconnect().catch(() => undefined);
       const code = (e as { code?: string } | null)?.code;
-      const safe = idempotent || code === 'E_NOT_CONNECTED' || this.reconnect.resendAfterPartialWrite;
+      // A write that failed before any native write began (a dead link seen at the first piece) cannot have printed: safe to send again.
+      const nothingSent = (e as { nothingSent?: boolean } | null)?.nothingSent === true;
+      const safe = idempotent || code === 'E_NOT_CONNECTED' || nothingSent || this.reconnect.resendAfterPartialWrite;
       if (!safe || this.reconnect.maxAttempts < 2 || !isTransient(e)) throw e;
       await this.open();
       return job();
@@ -144,10 +147,18 @@ export class LabelPrinter {
     this.transport.cancel?.();
   }
 
-  /** Send a label from any builder, or a raw command string. */
-  print(label: Printable | string): Promise<void> {
+  /**
+   * Send a label from any builder, or a raw command string.
+   * `signal` stops it: before it starts (while it waits in the queue) or between two pieces of a long write (E_CANCELLED).
+   * `onProgress` is told after each piece, on a transport that sends in pieces.
+   */
+  print(label: Printable | string, options: WriteOptions = {}): Promise<void> {
     const bytes = typeof label === 'string' ? utf8Encode(label) : label.toBytes();
-    return this.exclusive(() => this.withLink(() => this.transport.write(bytes), false));
+    return this.exclusive(() => {
+      // Cancelled while it waited in the queue: do not even connect.
+      if (options.signal?.aborted) throw new TransportError('The print was cancelled before it started', 'E_CANCELLED');
+      return this.withLink(() => this.transport.write(bytes, options), false);
+    });
   }
 
   /**

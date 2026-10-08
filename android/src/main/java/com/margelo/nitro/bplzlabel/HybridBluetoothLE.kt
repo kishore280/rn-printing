@@ -158,6 +158,7 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
         scan = null
         return Promise.rejected(BleError("E_BLUETOOTH_OFF", "Bluetooth is off"))
       }
+      session.watchAdapter()
       if (options.timeoutMs > 0) main.postDelayed({ session.finish(null) }, options.timeoutMs.toLong())
     }
     return promise
@@ -208,9 +209,24 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
   private fun requireScanPermission() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       if (!granted(Manifest.permission.BLUETOOTH_SCAN)) throw BleError("E_PERMISSION", "The BLUETOOTH_SCAN permission is not granted")
-    } else if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
-      throw BleError("E_PERMISSION", "The ACCESS_FINE_LOCATION permission is not granted (needed to scan on Android 11 and older)")
+    } else {
+      if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+        throw BleError("E_PERMISSION", "The ACCESS_FINE_LOCATION permission is not granted (needed to scan on Android 11 and older)")
+      }
+      // Android 11 and older return an empty scan, with no error, while the location switch is off.
+      if (!locationIsOn()) throw BleError("E_LOCATION_OFF", "Location is switched off. Android 11 and older need it on to find Bluetooth devices")
     }
+  }
+
+  private fun locationIsOn(): Boolean = try {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      context.getSystemService(android.location.LocationManager::class.java)?.isLocationEnabled ?: true
+    } else {
+      @Suppress("DEPRECATION")
+      android.provider.Settings.Secure.getInt(context.contentResolver, android.provider.Settings.Secure.LOCATION_MODE) != android.provider.Settings.Secure.LOCATION_MODE_OFF
+    }
+  } catch (_: Exception) {
+    true // cannot tell: do not block the scan
   }
 
   /** One running scan. `finish` is safe to call more than once. */
@@ -222,6 +238,27 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
   ) {
     private var done = false
     private val seen = HashSet<String>()
+
+    // A scan with no time limit would run for ever when Bluetooth goes off: no callback tells it. Watch the adapter while it runs.
+    private val adapterWatch = object : BroadcastReceiver() {
+      override fun onReceive(c: Context?, intent: Intent?) {
+        if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+        val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+        if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
+          finish(BleError("E_BLUETOOTH_OFF", "Bluetooth was turned off during the scan"))
+        }
+      }
+    }
+    private var watching = false
+
+    fun watchAdapter() {
+      try {
+        context.registerReceiver(adapterWatch, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+        watching = true
+      } catch (_: Exception) {
+        // Not fatal: the scan still has its own time limit.
+      }
+    }
 
     val callback = object : ScanCallback() {
       override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -235,7 +272,9 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       }
 
       override fun onScanFailed(errorCode: Int) {
-        finish(BleError("E_SCAN_FAILED", "Scan failed: ${scanErrorText(errorCode)}"))
+        // Android allows 5 scan starts in 30 seconds. Its own code for "too often" is 6 (hidden in older SDKs): a wait helps, so it has its own code.
+        val code = if (errorCode == SCAN_FAILED_TOO_FREQUENT) "E_SCAN_THROTTLED" else "E_SCAN_FAILED"
+        finish(BleError(code, "Scan failed: ${scanErrorText(errorCode)}"))
       }
     }
 
@@ -244,6 +283,13 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
         if (done) return
         done = true
         if (scan === this) scan = null
+      }
+      if (watching) {
+        try {
+          context.unregisterReceiver(adapterWatch)
+        } catch (_: IllegalArgumentException) {
+        }
+        watching = false
       }
       try {
         scanner.stopScan(callback)
@@ -259,7 +305,8 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
     ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "app registration failed"
     ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED -> "BLE scan is not supported on this phone"
     ScanCallback.SCAN_FAILED_INTERNAL_ERROR -> "internal error"
-    else -> "error code $code (Android allows only 5 scan starts in 30 seconds)"
+    SCAN_FAILED_TOO_FREQUENT -> "scanning too often (Android allows only 5 scan starts in 30 seconds). Wait 30 seconds"
+    else -> "error code $code"
   }
 
   private fun toResult(r: ScanResult): BleScanResult {
@@ -295,5 +342,8 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
     private const val REQUEST_ENABLE = 7421
     private const val ENABLE_WAIT_MS = 5000L
     private const val ENABLE_POLL_MS = 100L
+
+    /** ScanCallback.SCAN_FAILED_SCANNING_TOO_FREQUENTLY: not a public constant on every SDK. */
+    private const val SCAN_FAILED_TOO_FREQUENT = 6
   }
 }

@@ -7,6 +7,21 @@ export interface ReadOptions {
   maxBytes?: number;
 }
 
+/** The part of `AbortSignal` that this package uses. */
+export interface AbortSignalLike {
+  readonly aborted: boolean;
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: 'abort', listener: () => void): void;
+}
+
+/** Options of one write. A transport that cannot stop between pieces ignores `signal`. */
+export interface WriteOptions {
+  /** Abort to stop a long write between pieces. The write rejects with code E_CANCELLED. */
+  signal?: AbortSignalLike | undefined;
+  /** Called after each piece. */
+  onProgress?: ((sentBytes: number, totalBytes: number) => void) | undefined;
+}
+
 /** Life cycle of a link: `connecting` > `connected` > `writing` > `connected` ... > `disconnecting` > `disconnected`. */
 export type LinkState = 'connecting' | 'connected' | 'writing' | 'disconnecting' | 'disconnected';
 
@@ -24,7 +39,7 @@ export interface Transport {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   isConnected(): Promise<boolean>;
-  write(data: Uint8Array): Promise<void>;
+  write(data: Uint8Array, options?: WriteOptions): Promise<void>;
   read(options?: ReadOptions): Promise<Uint8Array>;
   /** Optional. The state of the link now. A transport that cannot tell leaves it out. */
   readonly connectionState?: LinkState;

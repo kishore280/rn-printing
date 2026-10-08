@@ -1,5 +1,5 @@
 import { LabelPrinter } from '../src/printer';
-import { PrinterNotReadyError } from '../src/errors';
+import { PrinterNotReadyError, TransportError } from '../src/errors';
 import { ZplLabel } from '../src/zpl';
 import { FakeTransport, bytes } from './helpers';
 
@@ -161,5 +161,56 @@ describe('LabelPrinter.getIdentification', () => {
   });
   it('gives null when the printer does not answer', async () => {
     expect(await new LabelPrinter(new FakeTransport()).getIdentification()).toBeNull();
+  });
+});
+
+describe('LabelPrinter: cancel and a failed write', () => {
+  it('does not connect or write when the signal is aborted while the job waits in the queue', async () => {
+    const t = new FakeTransport();
+    const p = new LabelPrinter(t);
+    const controller = new AbortController();
+    const first = p.print('~JC'); // takes the queue
+    const second = p.print('~JA', { signal: controller.signal });
+    controller.abort();
+    await first;
+    await expect(second).rejects.toMatchObject({ code: 'E_CANCELLED' });
+    expect(t.writtenText()).toBe('~JC');
+  });
+
+  it('passes the options to the transport', async () => {
+    const seen: unknown[] = [];
+    class Spy extends FakeTransport {
+      override async write(data: Uint8Array, options?: unknown) { seen.push(options); this.written.push(data); }
+    }
+    const progress = () => undefined;
+    await new LabelPrinter(new Spy()).print('~JC', { onProgress: progress });
+    expect(seen).toEqual([{ onProgress: progress }]);
+  });
+
+  const failing = (error: TransportError) => {
+    let calls = 0;
+    class Flaky extends FakeTransport {
+      override async write(data: Uint8Array) {
+        calls++;
+        if (calls === 1) throw error;
+        this.written.push(data);
+      }
+    }
+    return { transport: new Flaky(), calls: () => calls };
+  };
+
+  it('sends again once when the failed write sent nothing (no native write began)', async () => {
+    const error = Object.assign(new TransportError('The device disconnected after 0 of 3 bytes', 'E_DISCONNECTED'), { nothingSent: true, bytesSent: 0 });
+    const { transport, calls } = failing(error);
+    await new LabelPrinter(transport, { reconnect: { initialDelayMs: 1, maxDelayMs: 2, jitter: false } }).print('~JC');
+    expect(calls()).toBe(2);
+    expect(transport.writtenText()).toBe('~JC');
+  });
+
+  it('does not send again when a piece may be in the printer (a label could print twice)', async () => {
+    const error = Object.assign(new TransportError('Write timed out (0 of 3 bytes sent)', 'E_TIMEOUT'), { nothingSent: false, bytesSent: 0 });
+    const { transport, calls } = failing(error);
+    await expect(new LabelPrinter(transport, { reconnect: { initialDelayMs: 1, maxDelayMs: 2, jitter: false } }).print('~JC')).rejects.toMatchObject({ code: 'E_TIMEOUT' });
+    expect(calls()).toBe(1);
   });
 });

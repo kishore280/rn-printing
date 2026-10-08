@@ -178,7 +178,9 @@ The Classic PIN of a printer does not apply to BLE.
 | `E_AUTH` | The device needs pairing | no |
 | `E_NO_CHARACTERISTIC` | No usable write characteristic. The message lists the GATT table. | no |
 | `E_CANCELLED` | You cancelled | no |
-| `E_SCAN_FAILED` | The platform refused the scan (Android: no more than 5 starts in 30 s) | n/a |
+| `E_SCAN_FAILED` | The platform refused the scan | n/a |
+| `E_SCAN_THROTTLED` | Android: more than 5 scan starts in 30 s. Wait 30 s | n/a (a wait helps; the screen decides) |
+| `E_LOCATION_OFF` | Android 11 and older: the location switch is off, so a scan finds nothing | n/a (the user must fix it) |
 | `E_CONNECT`, `E_DISCOVERY`, `E_TIMEOUT`, `E_WRITE`, `E_DISCONNECTED`, `E_NOT_CONNECTED` | Link problem | yes (a write is sent again only with `resendAfterPartialWrite`) |
 
 ## Troubleshooting

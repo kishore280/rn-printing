@@ -62,12 +62,12 @@ then a check of the top findings in the code, then fixes with tests. Nothing her
 | 4 | RISK, iOS | Connection entries have no generation token. A late `didDisconnect` of an old link can remove the new attempt. | Open. Swift is not compiled here. |
 | 5 | RISK, iOS | `maximumWriteValueLength(for: .withResponse)` is often 512, which makes CoreBluetooth use long writes. Cheap printer firmware often lacks them. | Open. Fix: use the smaller of the two lengths. Swift not compiled. |
 | 10 | RISK, iOS | `requestPermissions()` returns before the user answers (the state is `unknown` at that moment). | Open. Needs a "first state update" promise. |
-| 3 | RISK | No GATT cache refresh when the characteristic table is wrong (`E_NO_CHARACTERISTIC`). | Open. Needs a spec change and `npx nitrogen`. |
-| 7 | RISK | A cancel flag is reset at the start of a write, so a cancel while a job waits in the queue is lost. | Open. |
-| 8 | RISK | `TransportError` does not say how many bytes went out. A print that failed with 0 bytes accepted could safely retry once. | Open. |
-| 9 | RISK | The Android state receiver is never removed. A scan with no time limit does not end when Bluetooth goes off. | Open. |
+| 3 | RISK | No GATT cache refresh when the characteristic table is wrong (`E_NO_CHARACTERISTIC`). | **Not done on purpose.** It needs the hidden `BluetoothGatt.refresh()` (reflection). Punch Through says Android 9+ restricts it, and Nordic keeps it opt-in. Toggle Bluetooth instead. Revisit only if seen in the field. |
+| 7 | RISK | A cancel while a job waits in the queue was lost. | **Fixed** (`print(label, { signal })`; aborted jobs never connect; test) |
+| 8 | RISK | `TransportError` did not say how many bytes went out. | **Fixed** (`bytesSent`, `nothingSent`). A write that failed before any native write began is sent again once. A write that may be in the printer is never sent again. 4 tests. |
+| 9 | RISK | A scan with no time limit did not end when Bluetooth went off. | **Fixed** (the scan watches the adapter, ends with `E_BLUETOOTH_OFF`). The one state receiver per process is kept: it is replaced, not added. |
 | 16 | RISK | HIGH connection priority is never lowered. No discovery delay (Nordic: 300 / 1600 ms). | Open. Delay only if seen in the field. |
-| 17 | RISK | The scan throttle (error 6) has no code of its own. On Android 11 and older nobody checks the location switch. | Open. |
+| 17 | RISK | The scan throttle (error 6) had no code. On Android 11 and older nobody checked the location switch. | **Fixed** (`E_SCAN_THROTTLED`, `E_LOCATION_OFF`). Compiled only. |
 | 18 | RISK | Two GATT clients to one address are not prevented (`BluetoothLE.inspect()` plus the transport). Many printers allow one central. | Open. |
 | 19 | RISK | iOS write timer starts when the job is queued, and a timed-out job can resolve the next one. Not reachable through the TS transport. | Open. |
 

@@ -7,6 +7,10 @@ export class UnsupportedPlatformError extends Error {
 
 export class TransportError extends Error {
   code?: string | undefined;
+  /** A failed write: bytes the link accepted before it failed. Not set for other errors. */
+  bytesSent?: number | undefined;
+  /** A failed write: true when no native write had started, so nothing can be printing. Only then is a second send safe. */
+  nothingSent?: boolean | undefined;
   constructor(message: string, code?: string) {
     super(message);
     this.name = 'TransportError';

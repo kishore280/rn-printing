@@ -1275,3 +1275,26 @@ describe('LabelPrinter: the link state', () => {
     expect(() => printer.cancel()).not.toThrow();
   });
 });
+
+describe('BluetoothLETransport: what a failed write says it sent', () => {
+  it('reports the bytes sent and that a native write began', async () => {
+    fakeNative({ mtu: 23, writeImpl: async (index) => { if (index === 1) throw new Error('[E_WRITE] status 133'); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const error = await t.write(bytes(60)).catch((e: TransportError) => e);
+    expect(error).toBeInstanceOf(TransportError);
+    expect((error as TransportError).bytesSent).toBe(20);
+    expect((error as TransportError).nothingSent).toBe(false);
+  });
+
+  it('says nothing was sent when the link is found dead at the first piece', async () => {
+    const fake = fakeNative();
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const write = t.write(bytes(30));
+    if (fake.links[0]) fake.links[0].connected = false; // the link died silently: no event came, the first check finds it
+    const error = await write.catch((e: TransportError) => e);
+    expect((error as TransportError).nothingSent).toBe(true);
+    expect((error as TransportError).bytesSent).toBe(0);
+  });
+});

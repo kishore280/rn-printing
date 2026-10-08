@@ -4,7 +4,7 @@ import { getBluetoothLE, toArrayBuffer } from '../native';
 import type { BleConnection } from '../specs/BleConnection.nitro';
 import type { BleScanResult } from '../specs/BleScanResult';
 import type { BluetoothLE as NativeBluetoothLE } from '../specs/BluetoothLE.nitro';
-import type { LinkEvent, LinkState, ReadOptions, Transport } from '../transport';
+import type { AbortSignalLike, LinkEvent, LinkState, ReadOptions, Transport, WriteOptions } from '../transport';
 import {
   BleGattCharacteristic,
   BleSelection,
@@ -39,12 +39,7 @@ export interface BleDevice {
   txPower: number | null;
 }
 
-/** The part of `AbortSignal` that this package uses. */
-export interface AbortSignalLike {
-  readonly aborted: boolean;
-  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
-  removeEventListener(type: 'abort', listener: () => void): void;
-}
+export type { AbortSignalLike } from '../transport';
 
 export interface BluetoothLEScanOptions {
   /** Ask the platform to report only devices that advertise one of these services. Default: all. */
@@ -166,12 +161,7 @@ export interface BleDiagnostics {
   lastWrite: BleWriteStats | null;
 }
 
-export interface BleWriteOptions {
-  /** Abort to stop a long write between pieces. The write rejects with code E_CANCELLED and the link closes. */
-  signal?: AbortSignalLike | undefined;
-  /** Called after each piece. */
-  onProgress?: ((sentBytes: number, totalBytes: number) => void) | undefined;
-}
+export type BleWriteOptions = WriteOptions;
 
 // ---------------------------------------------------------------------------------------
 // Errors
@@ -702,7 +692,8 @@ export class BluetoothLETransport implements Transport {
 
     this.setState('writing');
     let sent = 0;
-    const started = Date.now();
+    let started = false; // true once a native write began: from then on a piece may be in the printer
+    const startedAt = Date.now();
     const stats = (error?: TransportError): BleWriteStats => ({
       bytes: data.length,
       chunks: pieces.length,
@@ -710,7 +701,7 @@ export class BluetoothLETransport implements Transport {
       chunkDelayMs: delay,
       withResponse: pick.withResponse,
       sentBytes: sent,
-      durationMs: Date.now() - started,
+      durationMs: Date.now() - startedAt,
       ok: !error,
       errorCode: error?.code,
       errorMessage: error?.message,
@@ -723,6 +714,7 @@ export class BluetoothLETransport implements Transport {
         if (gen !== this.generation || !link.isConnected) {
           throw new TransportError(`The device disconnected after ${sent} of ${data.length} bytes: ${this.lostReason ?? 'link lost'}`, 'E_DISCONNECTED');
         }
+        started = true;
         await this.writePiece(link, pick, piece, timeoutMs, sent, data.length);
         sent += piece.length;
         options.onProgress?.(sent, data.length);
@@ -730,6 +722,9 @@ export class BluetoothLETransport implements Transport {
       }
     } catch (e) {
       const error = classify(e, 'E_WRITE');
+      // Say what went out, so the caller can tell a failure that sent nothing (safe to send again) from one that may have printed.
+      error.bytesSent = sent;
+      error.nothingSent = !started;
       this.lastWriteStats = stats(error);
       // The printer may hold half a job, and a native write may still be pending. Close the link,
       // so no later write can follow a failed one. The next job opens a clean link.
