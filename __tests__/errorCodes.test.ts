@@ -67,4 +67,10 @@ describe('error code table', () => {
       expect([code, errorCodeInfo(code)?.beforeAnyByte]).toEqual([code, true]);
     }
   });
+
+  it('marks an error that comes before any byte as "nothing sent", and leaves the others unmarked', () => {
+    for (const [code, info] of Object.entries(ERROR_CODES)) {
+      expect([code, new TransportError('x', code).nothingSent]).toEqual([code, info.beforeAnyByte ? true : undefined]);
+    }
+  });
 });
