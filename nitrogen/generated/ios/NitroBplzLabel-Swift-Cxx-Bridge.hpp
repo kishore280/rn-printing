@@ -8,13 +8,39 @@
 #pragma once
 
 // Forward declarations of C++ defined types
-
+// Forward declaration of `ArrayBufferHolder` to properly resolve imports.
+namespace NitroModules { class ArrayBufferHolder; }
+// Forward declaration of `BleCharacteristic` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { struct BleCharacteristic; }
+// Forward declaration of `BleScanResult` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { struct BleScanResult; }
+// Forward declaration of `HybridBleConnectionSpec` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { class HybridBleConnectionSpec; }
+// Forward declaration of `HybridBluetoothLESpec` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { class HybridBluetoothLESpec; }
 
 // Forward declarations of Swift defined types
-
+// Forward declaration of `HybridBleConnectionSpec_cxx` to properly resolve imports.
+namespace NitroBplzLabel { class HybridBleConnectionSpec_cxx; }
+// Forward declaration of `HybridBluetoothLESpec_cxx` to properly resolve imports.
+namespace NitroBplzLabel { class HybridBluetoothLESpec_cxx; }
 
 // Include C++ defined types
-
+#include "BleCharacteristic.hpp"
+#include "BleScanResult.hpp"
+#include "HybridBleConnectionSpec.hpp"
+#include "HybridBluetoothLESpec.hpp"
+#include <NitroModules/ArrayBuffer.hpp>
+#include <NitroModules/ArrayBufferHolder.hpp>
+#include <NitroModules/Promise.hpp>
+#include <NitroModules/PromiseHolder.hpp>
+#include <NitroModules/Result.hpp>
+#include <exception>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 /**
  * Contains specialized versions of C++ templated types so they can be accessed from Swift,
@@ -22,6 +48,416 @@
  */
 namespace margelo::nitro::bplzlabel::bridge::swift {
 
+  // pragma MARK: std::shared_ptr<Promise<double>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<double>>`.
+   */
+  using std__shared_ptr_Promise_double__ = std::shared_ptr<Promise<double>>;
+  inline std::shared_ptr<Promise<double>> create_std__shared_ptr_Promise_double__() noexcept {
+    return Promise<double>::create();
+  }
+  inline PromiseHolder<double> wrap_std__shared_ptr_Promise_double__(std::shared_ptr<Promise<double>> promise) noexcept {
+    return PromiseHolder<double>(std::move(promise));
+  }
   
+  // pragma MARK: std::function<void(double /* result */)>
+  /**
+   * Specialized version of `std::function<void(double)>`.
+   */
+  using Func_void_double = std::function<void(double /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(double / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_double_Wrapper final {
+  public:
+    explicit Func_void_double_Wrapper(std::function<void(double /* result */)>&& func): _function(std::make_unique<std::function<void(double /* result */)>>(std::move(func))) {}
+    inline void call(double result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(double /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_double create_Func_void_double(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_double_Wrapper wrap_Func_void_double(Func_void_double value) noexcept {
+    return Func_void_double_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::function<void(const std::exception_ptr& /* error */)>
+  /**
+   * Specialized version of `std::function<void(const std::exception_ptr&)>`.
+   */
+  using Func_void_std__exception_ptr = std::function<void(const std::exception_ptr& /* error */)>;
+  /**
+   * Wrapper class for a `std::function<void(const std::exception_ptr& / * error * /)>`, this can be used from Swift.
+   */
+  class Func_void_std__exception_ptr_Wrapper final {
+  public:
+    explicit Func_void_std__exception_ptr_Wrapper(std::function<void(const std::exception_ptr& /* error */)>&& func): _function(std::make_unique<std::function<void(const std::exception_ptr& /* error */)>>(std::move(func))) {}
+    inline void call(std::exception_ptr error) const noexcept {
+      _function->operator()(error);
+    }
+  private:
+    std::unique_ptr<std::function<void(const std::exception_ptr& /* error */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_std__exception_ptr create_Func_void_std__exception_ptr(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_std__exception_ptr_Wrapper wrap_Func_void_std__exception_ptr(Func_void_std__exception_ptr value) noexcept {
+    return Func_void_std__exception_ptr_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<bool>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<bool>>`.
+   */
+  using std__shared_ptr_Promise_bool__ = std::shared_ptr<Promise<bool>>;
+  inline std::shared_ptr<Promise<bool>> create_std__shared_ptr_Promise_bool__() noexcept {
+    return Promise<bool>::create();
+  }
+  inline PromiseHolder<bool> wrap_std__shared_ptr_Promise_bool__(std::shared_ptr<Promise<bool>> promise) noexcept {
+    return PromiseHolder<bool>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(bool /* result */)>
+  /**
+   * Specialized version of `std::function<void(bool)>`.
+   */
+  using Func_void_bool = std::function<void(bool /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(bool / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_bool_Wrapper final {
+  public:
+    explicit Func_void_bool_Wrapper(std::function<void(bool /* result */)>&& func): _function(std::make_unique<std::function<void(bool /* result */)>>(std::move(func))) {}
+    inline void call(bool result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(bool /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_bool create_Func_void_bool(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_bool_Wrapper wrap_Func_void_bool(Func_void_bool value) noexcept {
+    return Func_void_bool_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::vector<BleCharacteristic>
+  /**
+   * Specialized version of `std::vector<BleCharacteristic>`.
+   */
+  using std__vector_BleCharacteristic_ = std::vector<BleCharacteristic>;
+  inline std::vector<BleCharacteristic> create_std__vector_BleCharacteristic_(size_t size) noexcept {
+    std::vector<BleCharacteristic> vector;
+    vector.reserve(size);
+    return vector;
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<std::vector<BleCharacteristic>>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<std::vector<BleCharacteristic>>>`.
+   */
+  using std__shared_ptr_Promise_std__vector_BleCharacteristic___ = std::shared_ptr<Promise<std::vector<BleCharacteristic>>>;
+  inline std::shared_ptr<Promise<std::vector<BleCharacteristic>>> create_std__shared_ptr_Promise_std__vector_BleCharacteristic___() noexcept {
+    return Promise<std::vector<BleCharacteristic>>::create();
+  }
+  inline PromiseHolder<std::vector<BleCharacteristic>> wrap_std__shared_ptr_Promise_std__vector_BleCharacteristic___(std::shared_ptr<Promise<std::vector<BleCharacteristic>>> promise) noexcept {
+    return PromiseHolder<std::vector<BleCharacteristic>>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const std::vector<BleCharacteristic>& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const std::vector<BleCharacteristic>&)>`.
+   */
+  using Func_void_std__vector_BleCharacteristic_ = std::function<void(const std::vector<BleCharacteristic>& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const std::vector<BleCharacteristic>& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_std__vector_BleCharacteristic__Wrapper final {
+  public:
+    explicit Func_void_std__vector_BleCharacteristic__Wrapper(std::function<void(const std::vector<BleCharacteristic>& /* result */)>&& func): _function(std::make_unique<std::function<void(const std::vector<BleCharacteristic>& /* result */)>>(std::move(func))) {}
+    inline void call(std::vector<BleCharacteristic> result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const std::vector<BleCharacteristic>& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_std__vector_BleCharacteristic_ create_Func_void_std__vector_BleCharacteristic_(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_std__vector_BleCharacteristic__Wrapper wrap_Func_void_std__vector_BleCharacteristic_(Func_void_std__vector_BleCharacteristic_ value) noexcept {
+    return Func_void_std__vector_BleCharacteristic__Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<void>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<void>>`.
+   */
+  using std__shared_ptr_Promise_void__ = std::shared_ptr<Promise<void>>;
+  inline std::shared_ptr<Promise<void>> create_std__shared_ptr_Promise_void__() noexcept {
+    return Promise<void>::create();
+  }
+  inline PromiseHolder<void> wrap_std__shared_ptr_Promise_void__(std::shared_ptr<Promise<void>> promise) noexcept {
+    return PromiseHolder<void>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void()>
+  /**
+   * Specialized version of `std::function<void()>`.
+   */
+  using Func_void = std::function<void()>;
+  /**
+   * Wrapper class for a `std::function<void()>`, this can be used from Swift.
+   */
+  class Func_void_Wrapper final {
+  public:
+    explicit Func_void_Wrapper(std::function<void()>&& func): _function(std::make_unique<std::function<void()>>(std::move(func))) {}
+    inline void call() const noexcept {
+      _function->operator()();
+    }
+  private:
+    std::unique_ptr<std::function<void()>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void create_Func_void(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_Wrapper wrap_Func_void(Func_void value) noexcept {
+    return Func_void_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>`.
+   */
+  using std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer___ = std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>;
+  inline std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>> create_std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer___() noexcept {
+    return Promise<std::shared_ptr<ArrayBuffer>>::create();
+  }
+  inline PromiseHolder<std::shared_ptr<ArrayBuffer>> wrap_std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer___(std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>> promise) noexcept {
+    return PromiseHolder<std::shared_ptr<ArrayBuffer>>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const std::shared_ptr<ArrayBuffer>& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const std::shared_ptr<ArrayBuffer>&)>`.
+   */
+  using Func_void_std__shared_ptr_ArrayBuffer_ = std::function<void(const std::shared_ptr<ArrayBuffer>& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const std::shared_ptr<ArrayBuffer>& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_std__shared_ptr_ArrayBuffer__Wrapper final {
+  public:
+    explicit Func_void_std__shared_ptr_ArrayBuffer__Wrapper(std::function<void(const std::shared_ptr<ArrayBuffer>& /* result */)>&& func): _function(std::make_unique<std::function<void(const std::shared_ptr<ArrayBuffer>& /* result */)>>(std::move(func))) {}
+    inline void call(ArrayBufferHolder result) const noexcept {
+      _function->operator()(result.getArrayBuffer());
+    }
+  private:
+    std::unique_ptr<std::function<void(const std::shared_ptr<ArrayBuffer>& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_std__shared_ptr_ArrayBuffer_ create_Func_void_std__shared_ptr_ArrayBuffer_(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_std__shared_ptr_ArrayBuffer__Wrapper wrap_Func_void_std__shared_ptr_ArrayBuffer_(Func_void_std__shared_ptr_ArrayBuffer_ value) noexcept {
+    return Func_void_std__shared_ptr_ArrayBuffer__Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<HybridBleConnectionSpec>
+  /**
+   * Specialized version of `std::shared_ptr<HybridBleConnectionSpec>`.
+   */
+  using std__shared_ptr_HybridBleConnectionSpec_ = std::shared_ptr<HybridBleConnectionSpec>;
+  std::shared_ptr<HybridBleConnectionSpec> create_std__shared_ptr_HybridBleConnectionSpec_(void* NON_NULL swiftUnsafePointer) noexcept;
+  void* NON_NULL get_std__shared_ptr_HybridBleConnectionSpec_(std__shared_ptr_HybridBleConnectionSpec_ cppType);
+  
+  // pragma MARK: std::weak_ptr<HybridBleConnectionSpec>
+  using std__weak_ptr_HybridBleConnectionSpec_ = std::weak_ptr<HybridBleConnectionSpec>;
+  inline std__weak_ptr_HybridBleConnectionSpec_ weakify_std__shared_ptr_HybridBleConnectionSpec_(const std::shared_ptr<HybridBleConnectionSpec>& strong) noexcept { return strong; }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<double>>>
+  using Result_std__shared_ptr_Promise_double___ = Result<std::shared_ptr<Promise<double>>>;
+  inline Result_std__shared_ptr_Promise_double___ create_Result_std__shared_ptr_Promise_double___(const std::shared_ptr<Promise<double>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<double>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_double___ create_Result_std__shared_ptr_Promise_double___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<double>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<bool>>>
+  using Result_std__shared_ptr_Promise_bool___ = Result<std::shared_ptr<Promise<bool>>>;
+  inline Result_std__shared_ptr_Promise_bool___ create_Result_std__shared_ptr_Promise_bool___(const std::shared_ptr<Promise<bool>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<bool>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_bool___ create_Result_std__shared_ptr_Promise_bool___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<bool>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<std::vector<BleCharacteristic>>>>
+  using Result_std__shared_ptr_Promise_std__vector_BleCharacteristic____ = Result<std::shared_ptr<Promise<std::vector<BleCharacteristic>>>>;
+  inline Result_std__shared_ptr_Promise_std__vector_BleCharacteristic____ create_Result_std__shared_ptr_Promise_std__vector_BleCharacteristic____(const std::shared_ptr<Promise<std::vector<BleCharacteristic>>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<std::vector<BleCharacteristic>>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_std__vector_BleCharacteristic____ create_Result_std__shared_ptr_Promise_std__vector_BleCharacteristic____(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<std::vector<BleCharacteristic>>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<double>
+  using Result_double_ = Result<double>;
+  inline Result_double_ create_Result_double_(double value) noexcept {
+    return Result<double>::withValue(std::move(value));
+  }
+  inline Result_double_ create_Result_double_(const std::exception_ptr& error) noexcept {
+    return Result<double>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<void>>>
+  using Result_std__shared_ptr_Promise_void___ = Result<std::shared_ptr<Promise<void>>>;
+  inline Result_std__shared_ptr_Promise_void___ create_Result_std__shared_ptr_Promise_void___(const std::shared_ptr<Promise<void>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<void>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_void___ create_Result_std__shared_ptr_Promise_void___(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<void>>>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>>
+  using Result_std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer____ = Result<std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>>;
+  inline Result_std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer____ create_Result_std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer____(const std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer____ create_Result_std__shared_ptr_Promise_std__shared_ptr_ArrayBuffer____(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<std::shared_ptr<ArrayBuffer>>>>::withError(error);
+  }
+  
+  // pragma MARK: std::function<void(const std::string& /* state */)>
+  /**
+   * Specialized version of `std::function<void(const std::string&)>`.
+   */
+  using Func_void_std__string = std::function<void(const std::string& /* state */)>;
+  /**
+   * Wrapper class for a `std::function<void(const std::string& / * state * /)>`, this can be used from Swift.
+   */
+  class Func_void_std__string_Wrapper final {
+  public:
+    explicit Func_void_std__string_Wrapper(std::function<void(const std::string& /* state */)>&& func): _function(std::make_unique<std::function<void(const std::string& /* state */)>>(std::move(func))) {}
+    inline void call(std::string state) const noexcept {
+      _function->operator()(state);
+    }
+  private:
+    std::unique_ptr<std::function<void(const std::string& /* state */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_std__string create_Func_void_std__string(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_std__string_Wrapper wrap_Func_void_std__string(Func_void_std__string value) noexcept {
+    return Func_void_std__string_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::vector<std::string>
+  /**
+   * Specialized version of `std::vector<std::string>`.
+   */
+  using std__vector_std__string_ = std::vector<std::string>;
+  inline std::vector<std::string> create_std__vector_std__string_(size_t size) noexcept {
+    std::vector<std::string> vector;
+    vector.reserve(size);
+    return vector;
+  }
+  
+  // pragma MARK: std::optional<double>
+  /**
+   * Specialized version of `std::optional<double>`.
+   */
+  using std__optional_double_ = std::optional<double>;
+  inline std::optional<double> create_std__optional_double_(const double& value) noexcept {
+    return std::optional<double>(value);
+  }
+  inline bool has_value_std__optional_double_(const std::optional<double>& optional) noexcept {
+    return optional.has_value();
+  }
+  inline double get_std__optional_double_(const std::optional<double>& optional) noexcept {
+    return optional.value();
+  }
+  
+  // pragma MARK: std::function<void(const BleScanResult& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const BleScanResult&)>`.
+   */
+  using Func_void_BleScanResult = std::function<void(const BleScanResult& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const BleScanResult& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_BleScanResult_Wrapper final {
+  public:
+    explicit Func_void_BleScanResult_Wrapper(std::function<void(const BleScanResult& /* result */)>&& func): _function(std::make_unique<std::function<void(const BleScanResult& /* result */)>>(std::move(func))) {}
+    inline void call(BleScanResult result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const BleScanResult& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_BleScanResult create_Func_void_BleScanResult(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_BleScanResult_Wrapper wrap_Func_void_BleScanResult(Func_void_BleScanResult value) noexcept {
+    return Func_void_BleScanResult_Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>
+  /**
+   * Specialized version of `std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>`.
+   */
+  using std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec___ = std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>;
+  inline std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>> create_std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec___() noexcept {
+    return Promise<std::shared_ptr<HybridBleConnectionSpec>>::create();
+  }
+  inline PromiseHolder<std::shared_ptr<HybridBleConnectionSpec>> wrap_std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec___(std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>> promise) noexcept {
+    return PromiseHolder<std::shared_ptr<HybridBleConnectionSpec>>(std::move(promise));
+  }
+  
+  // pragma MARK: std::function<void(const std::shared_ptr<HybridBleConnectionSpec>& /* result */)>
+  /**
+   * Specialized version of `std::function<void(const std::shared_ptr<HybridBleConnectionSpec>&)>`.
+   */
+  using Func_void_std__shared_ptr_HybridBleConnectionSpec_ = std::function<void(const std::shared_ptr<HybridBleConnectionSpec>& /* result */)>;
+  /**
+   * Wrapper class for a `std::function<void(const std::shared_ptr<HybridBleConnectionSpec>& / * result * /)>`, this can be used from Swift.
+   */
+  class Func_void_std__shared_ptr_HybridBleConnectionSpec__Wrapper final {
+  public:
+    explicit Func_void_std__shared_ptr_HybridBleConnectionSpec__Wrapper(std::function<void(const std::shared_ptr<HybridBleConnectionSpec>& /* result */)>&& func): _function(std::make_unique<std::function<void(const std::shared_ptr<HybridBleConnectionSpec>& /* result */)>>(std::move(func))) {}
+    inline void call(std::shared_ptr<HybridBleConnectionSpec> result) const noexcept {
+      _function->operator()(result);
+    }
+  private:
+    std::unique_ptr<std::function<void(const std::shared_ptr<HybridBleConnectionSpec>& /* result */)>> _function;
+  } SWIFT_NONCOPYABLE;
+  Func_void_std__shared_ptr_HybridBleConnectionSpec_ create_Func_void_std__shared_ptr_HybridBleConnectionSpec_(void* NON_NULL swiftClosureWrapper) noexcept;
+  inline Func_void_std__shared_ptr_HybridBleConnectionSpec__Wrapper wrap_Func_void_std__shared_ptr_HybridBleConnectionSpec_(Func_void_std__shared_ptr_HybridBleConnectionSpec_ value) noexcept {
+    return Func_void_std__shared_ptr_HybridBleConnectionSpec__Wrapper(std::move(value));
+  }
+  
+  // pragma MARK: std::shared_ptr<HybridBluetoothLESpec>
+  /**
+   * Specialized version of `std::shared_ptr<HybridBluetoothLESpec>`.
+   */
+  using std__shared_ptr_HybridBluetoothLESpec_ = std::shared_ptr<HybridBluetoothLESpec>;
+  std::shared_ptr<HybridBluetoothLESpec> create_std__shared_ptr_HybridBluetoothLESpec_(void* NON_NULL swiftUnsafePointer) noexcept;
+  void* NON_NULL get_std__shared_ptr_HybridBluetoothLESpec_(std__shared_ptr_HybridBluetoothLESpec_ cppType);
+  
+  // pragma MARK: std::weak_ptr<HybridBluetoothLESpec>
+  using std__weak_ptr_HybridBluetoothLESpec_ = std::weak_ptr<HybridBluetoothLESpec>;
+  inline std__weak_ptr_HybridBluetoothLESpec_ weakify_std__shared_ptr_HybridBluetoothLESpec_(const std::shared_ptr<HybridBluetoothLESpec>& strong) noexcept { return strong; }
+  
+  // pragma MARK: Result<std::string>
+  using Result_std__string_ = Result<std::string>;
+  inline Result_std__string_ create_Result_std__string_(const std::string& value) noexcept {
+    return Result<std::string>::withValue(value);
+  }
+  inline Result_std__string_ create_Result_std__string_(const std::exception_ptr& error) noexcept {
+    return Result<std::string>::withError(error);
+  }
+  
+  // pragma MARK: Result<void>
+  using Result_void_ = Result<void>;
+  inline Result_void_ create_Result_void_() noexcept {
+    return Result<void>::withValue();
+  }
+  inline Result_void_ create_Result_void_(const std::exception_ptr& error) noexcept {
+    return Result<void>::withError(error);
+  }
+  
+  // pragma MARK: Result<std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>>
+  using Result_std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec____ = Result<std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>>;
+  inline Result_std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec____ create_Result_std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec____(const std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>& value) noexcept {
+    return Result<std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>>::withValue(value);
+  }
+  inline Result_std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec____ create_Result_std__shared_ptr_Promise_std__shared_ptr_HybridBleConnectionSpec____(const std::exception_ptr& error) noexcept {
+    return Result<std::shared_ptr<Promise<std::shared_ptr<HybridBleConnectionSpec>>>>::withError(error);
+  }
 
 } // namespace margelo::nitro::bplzlabel::bridge::swift

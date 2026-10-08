@@ -101,3 +101,31 @@ export function parseExtendedStatus(raw: string): ExtendedStatus | null {
     raw,
   };
 }
+
+export interface PrinterIdentity {
+  model: string;
+  firmware: string;
+  /** Dots per millimetre: 8 = 203 dpi, 12 = 300 dpi, 24 = 600 dpi. null when the reply has no number there. */
+  dotsPerMm: number | null;
+  /** The memory field as the printer writes it ("8192KB"), or an empty string. */
+  memory: string;
+  raw: string;
+}
+
+/**
+ * Parse the reply to the ZPL host identification command (~HI): `<STX>model,firmware,dots per mm,memory,options<ETX>`.
+ * Source: Zebra ZPL II guide, ~HI. NOT yet checked against a real SNBC BPLZ printer. Returns null when the text has no model and firmware.
+ */
+export function parseHostIdentification(raw: string): PrinterIdentity | null {
+  const text = raw.replace(/[\x02\x03\r\n]+/g, ' ').trim();
+  const parts = text.split(',').map((p) => p.trim());
+  if (parts.length < 2 || !parts[0] || !parts[1]) return null;
+  const n = Number(parts[2]);
+  return {
+    model: parts[0],
+    firmware: parts[1],
+    dotsPerMm: parts[2] !== undefined && parts[2] !== '' && Number.isFinite(n) && n > 0 ? n : null,
+    memory: parts[3] ?? '',
+    raw,
+  };
+}

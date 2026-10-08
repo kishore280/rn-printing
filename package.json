@@ -1,6 +1,6 @@
 {
   "name": "react-native-bplz-label-printer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Print ZPL (BPLZ) labels from React Native. Bluetooth Classic (SPP) on Android, TCP on Android and iOS. Built for SNBC-made label printers such as the TVS LP 46 Dlite.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -55,7 +55,6 @@
     "nitrogen": "^0.37.1",
     "react": "^19.3.0",
     "react-native": "^0.87.1",
-    "react-native-ble-plx": "^3.5.1",
     "react-native-nitro-modules": "^0.37.1",
     "ts-jest": "^29.1.2",
     "typescript": "^5.4.5"
@@ -67,7 +66,8 @@
       "**/__tests__/**/*.test.ts"
     ],
     "moduleNameMapper": {
-      "^react-native$": "<rootDir>/test/mocks/react-native.ts"
+      "^react-native$": "<rootDir>/test/mocks/react-native.ts",
+      "^react-native-bplz-label-printer$": "<rootDir>/src/index.ts"
     },
     "testPathIgnorePatterns": [
       "/node_modules/",

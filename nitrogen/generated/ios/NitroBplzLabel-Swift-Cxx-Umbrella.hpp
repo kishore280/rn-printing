@@ -8,10 +8,32 @@
 #pragma once
 
 // Forward declarations of C++ defined types
-
+// Forward declaration of `BleCharacteristic` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { struct BleCharacteristic; }
+// Forward declaration of `BleScanOptions` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { struct BleScanOptions; }
+// Forward declaration of `BleScanResult` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { struct BleScanResult; }
+// Forward declaration of `HybridBleConnectionSpec` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { class HybridBleConnectionSpec; }
+// Forward declaration of `HybridBluetoothLESpec` to properly resolve imports.
+namespace margelo::nitro::bplzlabel { class HybridBluetoothLESpec; }
 
 // Include C++ defined types
-
+#include "BleCharacteristic.hpp"
+#include "BleScanOptions.hpp"
+#include "BleScanResult.hpp"
+#include "HybridBleConnectionSpec.hpp"
+#include "HybridBluetoothLESpec.hpp"
+#include <NitroModules/ArrayBuffer.hpp>
+#include <NitroModules/Promise.hpp>
+#include <NitroModules/Result.hpp>
+#include <exception>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 // C++ helpers for Swift
 #include "NitroBplzLabel-Swift-Cxx-Bridge.hpp"
@@ -23,7 +45,10 @@
 #include <NitroModules/DateToChronoDate.hpp>
 
 // Forward declarations of Swift defined types
-
+// Forward declaration of `HybridBleConnectionSpec_cxx` to properly resolve imports.
+namespace NitroBplzLabel { class HybridBleConnectionSpec_cxx; }
+// Forward declaration of `HybridBluetoothLESpec_cxx` to properly resolve imports.
+namespace NitroBplzLabel { class HybridBluetoothLESpec_cxx; }
 
 // Include Swift defined types
 #if __has_include("NitroBplzLabel-Swift.h")

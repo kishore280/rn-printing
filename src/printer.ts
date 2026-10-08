@@ -8,8 +8,12 @@ import {
   resolveReconnect,
   ResolvedReconnect,
 } from './reconnect';
-import { ExtendedStatus, parseExtendedStatus, parseHostStatus, PrinterStatus } from './status';
-import type { Transport } from './transport';
+import { settle, settleDelay, observe, HEALTH_START, type Evidence, type HealthState, type LinkHealth } from './linkHealth';
+import { zplSettings } from './zpl';
+import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
+import { TransportError } from './errors';
+import type { LinkEvent, LinkState, Transport, WriteOptions } from './transport';
+import type { BleGattReading, BluetoothLETransport } from './transports/bluetoothLE';
 
 /** Any label builder: ZplLabel, CpclLabel or BplaLabel. */
 export interface Printable {
@@ -26,6 +30,24 @@ export interface LabelPrinterOptions {
   onConnectionEvent?: ((event: ConnectionEvent) => void) | undefined;
 }
 
+export interface WaitForPrinterOptions {
+  /** Give up waiting after this many ms and send anyway. Default 15000. */
+  timeoutMs?: number;
+  /** Ask again after this many ms. Default 150. */
+  pollMs?: number;
+  /** Send the next label when the printer holds at most this many formats. Default 0. */
+  maxFormatsInBuffer?: number;
+}
+
+export interface PrintAllOptions {
+  /** Wait this long after each label before the next one, in ms. Default 0. */
+  pauseMs?: number | undefined;
+  /** Ask the printer (~HS) before each label after the first, and wait until it has room. */
+  waitForPrinter?: boolean | WaitForPrinterOptions | undefined;
+  /** Called after each label was sent. */
+  onLabelSent?: ((index: number, total: number) => void) | undefined;
+}
+
 export interface StatusOptions {
   /** Default 1500. */
   timeoutMs?: number;
@@ -37,13 +59,80 @@ export class LabelPrinter {
 
   private readonly reconnect: ResolvedReconnect;
   private readonly onEvent: (event: ConnectionEvent) => void;
+  private healthState: HealthState = HEALTH_START;
+  private healthTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly healthListeners = new Set<(health: LinkHealth) => void>();
+  private readonly stopLinkEvents: () => void;
 
   constructor(
     private readonly transport: Transport,
     options: LabelPrinterOptions = {}
   ) {
     this.reconnect = resolveReconnect(options.reconnect);
-    this.onEvent = options.onConnectionEvent ?? (() => undefined);
+    const user = options.onConnectionEvent ?? (() => undefined);
+    this.onEvent = (e) => {
+      if (e.type === 'connected') this.feed({ kind: 'alive' });
+      else if (e.type === 'failed') this.feed({ kind: 'failed' });
+      user(e);
+    };
+    // The transport tells when the link opens, closes or is lost. A failed write ends in `disconnected` with an error.
+    this.stopLinkEvents =
+      transport.onConnectionState?.((e) => {
+        if (e.state === 'connected') this.feed({ kind: 'alive' });
+        else if (e.state === 'disconnected') {
+          if (e.reason === 'requested') this.feed({ kind: 'closed' });
+          else this.feed({ kind: e.error ? 'failed' : 'down' });
+        }
+      }) ?? (() => undefined);
+  }
+
+  /** Feed the link-health rules (linkHealth.ts) and run their timer. */
+  private feed(evidence: Evidence): void {
+    const before = this.healthState.health;
+    this.healthState = observe(this.healthState, evidence, Date.now());
+    this.armHealthTimer();
+    if (this.healthState.health !== before) this.emitHealth();
+  }
+
+  private armHealthTimer(): void {
+    if (this.healthTimer) clearTimeout(this.healthTimer);
+    this.healthTimer = null;
+    const delay = settleDelay(this.healthState, Date.now());
+    if (delay === null) return;
+    this.healthTimer = setTimeout(() => {
+      this.healthTimer = null;
+      const before = this.healthState.health;
+      this.healthState = settle(this.healthState, Date.now());
+      if (this.healthState.health !== before) this.emitHealth();
+    }, delay);
+  }
+
+  private emitHealth(): void {
+    for (const l of [...this.healthListeners]) l(this.healthState.health);
+  }
+
+  /**
+   * Is the link really lost? `up`, `wobbling` (down, not sure yet), `lost` (down for 4 s, or two hard failures in a row), or `unknown`
+   * (no link yet, or closed on purpose). One link event never turns `up` into `lost`: see linkHealth.ts for the rules and sources.
+   * This is the link only. A printer that is connected but does not answer `~HS` stays `up`: `getStatus()` returns null for it.
+   */
+  get health(): LinkHealth {
+    return this.healthState.health;
+  }
+
+  /** Be told when `health` changes. Returns a function that removes the listener. */
+  onHealth(listener: (health: LinkHealth) => void): () => void {
+    this.healthListeners.add(listener);
+    return () => this.healthListeners.delete(listener);
+  }
+
+  /** Close the link and stop the printer's timers and listeners. Call it when the printer object is thrown away. */
+  async dispose(): Promise<void> {
+    this.stopLinkEvents();
+    if (this.healthTimer) clearTimeout(this.healthTimer);
+    this.healthTimer = null;
+    this.healthListeners.clear();
+    await this.transport.disconnect().catch(() => undefined);
   }
 
   /** Open the link (with retry) if it is closed. */
@@ -71,7 +160,9 @@ export class LabelPrinter {
     } catch (e) {
       await this.transport.disconnect().catch(() => undefined);
       const code = (e as { code?: string } | null)?.code;
-      const safe = idempotent || code === 'E_NOT_CONNECTED' || this.reconnect.resendAfterPartialWrite;
+      // A write that failed before any native write began (a dead link seen at the first piece) cannot have printed: safe to send again.
+      const nothingSent = (e as { nothingSent?: boolean } | null)?.nothingSent === true;
+      const safe = idempotent || code === 'E_NOT_CONNECTED' || nothingSent || this.reconnect.resendAfterPartialWrite;
       if (!safe || this.reconnect.maxAttempts < 2 || !isTransient(e)) throw e;
       await this.open();
       return job();
@@ -101,15 +192,97 @@ export class LabelPrinter {
     return this.transport.isConnected();
   }
 
-  /** Send a label from any builder, or a raw command string. */
-  print(label: Printable | string): Promise<void> {
-    const bytes = typeof label === 'string' ? utf8Encode(label) : label.toBytes();
-    return this.exclusive(() => this.withLink(() => this.transport.write(bytes), false));
+  /**
+   * The state of the link now. `null` when the transport cannot tell (Classic Bluetooth, TCP). A screen reads this and
+   * `onConnectionState` instead of keeping its own reference to the transport. This is the link only: the printer's own
+   * state (paper out, head open) comes from `getStatus()`, and a silent printer is not a lost link.
+   */
+  get connectionState(): LinkState | null {
+    return this.transport.connectionState ?? null;
   }
 
-  /** Send many labels in order. Stops at the first error. */
-  async printAll(labels: ReadonlyArray<Printable | string>): Promise<void> {
-    for (const label of labels) await this.print(label);
+  /**
+   * Be told when the link changes (connect, write, lost link, close). Returns a function that removes the listener.
+   * Returns a function that does nothing when the transport has no events. These are raw events: one `disconnected` can be a
+   * wobble. To show "not connected" to a person, use `health` and `onHealth`.
+   */
+  onConnectionState(listener: (event: LinkEvent) => void): () => void {
+    return this.transport.onConnectionState?.(listener) ?? (() => undefined);
+  }
+
+  /** Stop the write that runs now, between two pieces. Does nothing when the transport cannot. */
+  cancel(): void {
+    this.transport.cancel?.();
+  }
+
+  /**
+   * Send a label from any builder, or a raw command string.
+   * `signal` stops it: before it starts (while it waits in the queue) or between two pieces of a long write (E_CANCELLED).
+   * `onProgress` is told after each piece, on a transport that sends in pieces.
+   */
+  print(label: Printable | string, options: WriteOptions = {}): Promise<void> {
+    const bytes = typeof label === 'string' ? utf8Encode(label) : label.toBytes();
+    return this.exclusive(() => {
+      // Cancelled while it waited in the queue: do not even connect.
+      if (options.signal?.aborted) throw new TransportError('The print was cancelled before it started', 'E_CANCELLED');
+      return this.withLink(() => this.transport.write(bytes, options), false);
+    });
+  }
+
+  /**
+   * Send many labels in order. Stops at the first error.
+   *
+   * A printer that is busy printing can drop what it is sent: on one TVS LP 46 Dlite, 10 small labels sent in 53 ms printed 2.
+   * So between two labels this can wait (`pauseMs`) or ask the printer (`~HS`) until it has room (`waitForPrinter`).
+   * Both are NOT yet shown to fix it on a printer: that is what the hardware test is for.
+   */
+  async printAll(labels: ReadonlyArray<Printable | string>, options: PrintAllOptions = {}): Promise<void> {
+    const wait = options.waitForPrinter === true ? {} : options.waitForPrinter || null;
+    for (const [index, label] of labels.entries()) {
+      if (index > 0) {
+        if (options.pauseMs && options.pauseMs > 0) await new Promise<void>((r) => setTimeout(r, options.pauseMs));
+        if (wait) await this.waitForRoom(wait);
+      }
+      await this.print(label);
+      options.onLabelSent?.(index, labels.length);
+    }
+  }
+
+  /**
+   * Ask the printer (~HS) until it holds at most `maxFormatsInBuffer` formats and its buffer is not full, or `timeoutMs` pass.
+   * Returns true when it had room, false on a timeout. A printer that does not answer ~HS counts as "no information":
+   * this returns false at once, and the caller falls back to a pause.
+   */
+  private async waitForRoom(o: WaitForPrinterOptions): Promise<boolean> {
+    const timeoutMs = o.timeoutMs ?? 15000;
+    const pollMs = o.pollMs ?? 150;
+    const max = o.maxFormatsInBuffer ?? 0;
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      const status = await this.getStatus({ timeoutMs: 600 });
+      if (status === null) return false;
+      if (!status.bufferFull && status.formatsInBuffer <= max) return true;
+      await new Promise<void>((r) => setTimeout(r, pollMs));
+    }
+    return false;
+  }
+
+  /**
+   * Printer control. Each sends one ZPL command (`zplSettings`). NOT yet checked on the SNBC printer: send them and read the status.
+   * `clearJobs` is ~JA (cancel all formats and clear the buffers), `resume` is ~PS (print start after a pause),
+   * `reset` is ~JR (like a power cycle), `calibrate` is ~JC (measure the media; the printer feeds labels).
+   */
+  clearJobs(): Promise<void> {
+    return this.print(zplSettings.cancelAll());
+  }
+  resume(): Promise<void> {
+    return this.print(zplSettings.resume());
+  }
+  reset(): Promise<void> {
+    return this.print(zplSettings.reset());
+  }
+  calibrate(): Promise<void> {
+    return this.print(zplSettings.calibrate());
   }
 
   /**
@@ -118,6 +291,27 @@ export class LabelPrinter {
    */
   getStatus(options: StatusOptions = {}): Promise<PrinterStatus | null> {
     return this.query('~HS', options, parseHostStatus);
+  }
+
+  /**
+   * Send a read-only command and return the printer's answer as text, or null when it says nothing within `timeoutMs`.
+   * For commands this library has no parser for (see `PROBES`). Only send commands that read: nothing here checks that.
+   */
+  ask(command: string, options: StatusOptions = {}): Promise<string | null> {
+    return this.query(command, options, (raw) => raw);
+  }
+
+  /**
+   * Read every readable GATT characteristic of a Bluetooth Low Energy link (the table nRF Connect shows). Resolves with null
+   * for a transport that is not BLE (Classic and TCP have no GATT table). Nothing is written to the printer.
+   */
+  readGatt(): Promise<BleGattReading[] | null> {
+    return this.exclusive(() =>
+      this.withLink(async () => {
+        const t = this.transport as Partial<Pick<BluetoothLETransport, 'readGatt'>>;
+        return typeof t.readGatt === 'function' ? t.readGatt() : null;
+      }, true)
+    );
   }
 
   /** Send a query, wait for the reply and parse it. Nothing else is sent in between. */
@@ -129,6 +323,14 @@ export class LabelPrinter {
       const bytes = await this.transport.read({ timeoutMs: options.timeoutMs ?? 1500, idleMs: 150 });
       return bytes.length === 0 ? null : parse(latin1Decode(bytes));
     }, true));
+  }
+
+  /**
+   * Ask who the printer is (~HI): model, firmware and the dots per millimetre (its resolution). Returns null when it gives no reply
+   * or a reply of another shape. The label length (not the width) is in the status: `getStatus().labelLengthDots`.
+   */
+  getIdentification(options: StatusOptions = {}): Promise<PrinterIdentity | null> {
+    return this.query('~HI', options, parseHostIdentification);
   }
 
   /** Ask for the error and warning flags (~HQES, BPLZ only). Returns null when there is no readable reply. */

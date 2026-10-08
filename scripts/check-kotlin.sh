@@ -60,4 +60,14 @@ echo "== kotlinc $KOTLIN_VERSION: our HybridObjects + generated specs + Nitro so
   "$C"/stubs/*.kt 2>&1 | grep -v '^Picked up' || true
 test -f "$OUT/com/margelo/nitro/bplzlabel/HybridClassicBluetooth.class"
 test -f "$OUT/com/margelo/nitro/bplzlabel/HybridClassicConnection.class"
+test -f "$OUT/com/margelo/nitro/bplzlabel/HybridBluetoothLE.class"
+test -f "$OUT/com/margelo/nitro/bplzlabel/HybridBleConnection.class"
+
+# Race tests for the GATT operation guard (plain JVM, no Android classes).
+TESTOUT="$(mktemp -d)"
+trap 'rm -rf "$OUT" "$TESTOUT"' EXIT
+"$C/kotlinc/bin/kotlinc" -jvm-target 17 -no-reflect -Werror \
+  android/src/main/java/com/margelo/nitro/bplzlabel/GattOpGuard.kt test-native/GattOpGuardTest.kt \
+  -d "$TESTOUT" 2>&1 | grep -v '^Picked up' || true
+java -cp "$TESTOUT:$C/kotlinc/lib/kotlin-stdlib.jar" com.margelo.nitro.bplzlabel.GattOpGuardTestKt
 echo "Kotlin OK"

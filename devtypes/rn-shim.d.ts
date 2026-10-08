@@ -7,5 +7,6 @@ declare module 'react-native' {
     PERMISSIONS: Record<string, string>;
     RESULTS: { GRANTED: string; DENIED: string; NEVER_ASK_AGAIN: string };
     request(permission: string, rationale?: unknown): Promise<string>;
+    requestMultiple(permissions: string[]): Promise<Record<string, string>>;
   };
 }

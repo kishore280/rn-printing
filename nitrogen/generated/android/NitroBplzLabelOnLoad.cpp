@@ -15,6 +15,11 @@
 #include <fbjni/fbjni.h>
 #include <NitroModules/HybridObjectRegistry.hpp>
 
+#include "JHybridBleConnectionSpec.hpp"
+#include "JFunc_void_std__shared_ptr_ArrayBuffer_.hpp"
+#include "JHybridBluetoothLESpec.hpp"
+#include "JFunc_void_std__string.hpp"
+#include "JFunc_void_BleScanResult.hpp"
 #include "JHybridClassicBluetoothSpec.hpp"
 #include "JHybridClassicConnectionSpec.hpp"
 #include "HybridBplzCodec.hpp"
@@ -36,12 +41,25 @@ struct JHybridClassicBluetoothSpecImpl: public jni::JavaClass<JHybridClassicBlue
     return javaPart->getJHybridClassicBluetoothSpec();
   }
 };
+struct JHybridBluetoothLESpecImpl: public jni::JavaClass<JHybridBluetoothLESpecImpl, JHybridBluetoothLESpec::JavaPart> {
+  static constexpr auto kJavaDescriptor = "Lcom/margelo/nitro/bplzlabel/HybridBluetoothLE;";
+  static std::shared_ptr<JHybridBluetoothLESpec> create() {
+    static const auto constructorFn = javaClassStatic()->getConstructor<JHybridBluetoothLESpecImpl::javaobject()>();
+    jni::local_ref<JHybridBluetoothLESpec::JavaPart> javaPart = javaClassStatic()->newObject(constructorFn);
+    return javaPart->getJHybridBluetoothLESpec();
+  }
+};
 
 void registerAllNatives() {
   using namespace margelo::nitro;
   using namespace margelo::nitro::bplzlabel;
 
   // Register native JNI methods
+  margelo::nitro::bplzlabel::JHybridBleConnectionSpec::CxxPart::registerNatives();
+  margelo::nitro::bplzlabel::JFunc_void_std__shared_ptr_ArrayBuffer__cxx::registerNatives();
+  margelo::nitro::bplzlabel::JHybridBluetoothLESpec::CxxPart::registerNatives();
+  margelo::nitro::bplzlabel::JFunc_void_std__string_cxx::registerNatives();
+  margelo::nitro::bplzlabel::JFunc_void_BleScanResult_cxx::registerNatives();
   margelo::nitro::bplzlabel::JHybridClassicBluetoothSpec::CxxPart::registerNatives();
   margelo::nitro::bplzlabel::JHybridClassicConnectionSpec::CxxPart::registerNatives();
 
@@ -59,6 +77,12 @@ void registerAllNatives() {
     "ClassicBluetooth",
     []() -> std::shared_ptr<HybridObject> {
       return JHybridClassicBluetoothSpecImpl::create();
+    }
+  );
+  HybridObjectRegistry::registerHybridObjectConstructor(
+    "BluetoothLE",
+    []() -> std::shared_ptr<HybridObject> {
+      return JHybridBluetoothLESpecImpl::create();
     }
   );
 }

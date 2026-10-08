@@ -7,10 +7,11 @@
 
 #import <Foundation/Foundation.h>
 #import <NitroModules/HybridObjectRegistry.hpp>
-
+#import "NitroBplzLabel-Swift-Cxx-Umbrella.hpp"
 #import <type_traits>
 
 #include "HybridBplzCodec.hpp"
+#include "HybridBluetoothLESpecSwift.hpp"
 
 @interface NitroBplzLabelAutolinking : NSObject
 @end
@@ -28,6 +29,13 @@
                     "The HybridObject \"HybridBplzCodec\" is not default-constructible! "
                     "Create a public constructor that takes zero arguments to be able to autolink this HybridObject.");
       return std::make_shared<HybridBplzCodec>();
+    }
+  );
+  HybridObjectRegistry::registerHybridObjectConstructor(
+    "BluetoothLE",
+    []() -> std::shared_ptr<HybridObject> {
+      std::shared_ptr<HybridBluetoothLESpec> hybridObject = NitroBplzLabel::NitroBplzLabelAutolinking::createBluetoothLE();
+      return hybridObject;
     }
   );
 }

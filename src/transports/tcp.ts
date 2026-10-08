@@ -41,6 +41,7 @@ function toBytes(chunk: unknown): Uint8Array {
 export class TcpTransport implements Transport {
   private socket: TcpSocketLike | null = null;
   private connected = false;
+  private lastError: string | null = null;
   private readonly inbox = new Inbox();
 
   constructor(private readonly options: TcpTransportOptions) {}
@@ -49,6 +50,16 @@ export class TcpTransport implements Transport {
     const { host, createConnection } = this.options;
     const port = this.options.port ?? 9100;
     const timeoutMs = this.options.connectTimeoutMs ?? 5000;
+    if (!host) return Promise.reject(new TransportError('TcpTransport needs a host', 'E_BAD_ADDRESS'));
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return Promise.reject(new TransportError(`Bad TCP port: ${port}`, 'E_BAD_ADDRESS'));
+    }
+    // A second connect() must not leave the first socket open.
+    this.socket?.destroy();
+    this.socket = null;
+    this.connected = false;
+    this.lastError = null;
+    this.inbox.clear();
 
     return new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -72,10 +83,11 @@ export class TcpTransport implements Transport {
       });
       socket.on('error', (err: { message?: string } | undefined) => {
         this.connected = false;
+        this.lastError = err?.message ?? 'TCP error';
         if (!settled) {
           settled = true;
           clearTimeout(timer);
-          reject(new TransportError(err?.message ?? 'TCP error', 'E_CONNECT'));
+          reject(new TransportError(`Cannot connect to ${host}:${port}: ${this.lastError}`, 'E_CONNECT'));
         }
       });
       socket.on('close', () => {
@@ -98,11 +110,11 @@ export class TcpTransport implements Transport {
   write(data: Uint8Array): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       if (!this.socket || !this.connected) {
-        reject(new TransportError('Not connected', 'E_NOT_CONNECTED'));
+        reject(new TransportError(this.lastError ? `Not connected (${this.lastError})` : 'Not connected', 'E_NOT_CONNECTED'));
         return;
       }
       this.socket.write(data, undefined, (err?: Error | null) =>
-        err ? reject(new TransportError(err.message, 'E_WRITE')) : resolve()
+        err ? reject(new TransportError(`TCP write failed: ${err.message}`, 'E_WRITE')) : resolve()
       );
     });
   }

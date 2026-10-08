@@ -8,10 +8,115 @@
 #include "NitroBplzLabel-Swift-Cxx-Bridge.hpp"
 
 // Include C++ implementation defined types
-
+#include "HybridBleConnectionSpecSwift.hpp"
+#include "HybridBluetoothLESpecSwift.hpp"
+#include "NitroBplzLabel-Swift-Cxx-Umbrella.hpp"
+#include <NitroModules/NitroDefines.hpp>
 
 namespace margelo::nitro::bplzlabel::bridge::swift {
 
+  // pragma MARK: std::function<void(double /* result */)>
+  Func_void_double create_Func_void_double(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_double::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](double result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
   
+  // pragma MARK: std::function<void(const std::exception_ptr& /* error */)>
+  Func_void_std__exception_ptr create_Func_void_std__exception_ptr(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_std__exception_ptr::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const std::exception_ptr& error) mutable -> void {
+      swiftClosure.call(error);
+    };
+  }
+  
+  // pragma MARK: std::function<void(bool /* result */)>
+  Func_void_bool create_Func_void_bool(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_bool::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](bool result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::function<void(const std::vector<BleCharacteristic>& /* result */)>
+  Func_void_std__vector_BleCharacteristic_ create_Func_void_std__vector_BleCharacteristic_(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_std__vector_BleCharacteristic_::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const std::vector<BleCharacteristic>& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::function<void()>
+  Func_void create_Func_void(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)]() mutable -> void {
+      swiftClosure.call();
+    };
+  }
+  
+  // pragma MARK: std::function<void(const std::shared_ptr<ArrayBuffer>& /* result */)>
+  Func_void_std__shared_ptr_ArrayBuffer_ create_Func_void_std__shared_ptr_ArrayBuffer_(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_std__shared_ptr_ArrayBuffer_::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const std::shared_ptr<ArrayBuffer>& result) mutable -> void {
+      swiftClosure.call(ArrayBufferHolder(result));
+    };
+  }
+  
+  // pragma MARK: std::shared_ptr<HybridBleConnectionSpec>
+  std::shared_ptr<HybridBleConnectionSpec> create_std__shared_ptr_HybridBleConnectionSpec_(void* NON_NULL swiftUnsafePointer) noexcept {
+    NitroBplzLabel::HybridBleConnectionSpec_cxx swiftPart = NitroBplzLabel::HybridBleConnectionSpec_cxx::fromUnsafe(swiftUnsafePointer);
+    return std::make_shared<margelo::nitro::bplzlabel::HybridBleConnectionSpecSwift>(swiftPart);
+  }
+  void* NON_NULL get_std__shared_ptr_HybridBleConnectionSpec_(std__shared_ptr_HybridBleConnectionSpec_ cppType) {
+    std::shared_ptr<margelo::nitro::bplzlabel::HybridBleConnectionSpecSwift> swiftWrapper = std::dynamic_pointer_cast<margelo::nitro::bplzlabel::HybridBleConnectionSpecSwift>(cppType);
+    #ifdef NITRO_DEBUG
+    if (swiftWrapper == nullptr) [[unlikely]] {
+      throw std::runtime_error("Class \"HybridBleConnectionSpec\" is not implemented in Swift!");
+    }
+    #endif
+    NitroBplzLabel::HybridBleConnectionSpec_cxx& swiftPart = swiftWrapper->getSwiftPart();
+    return swiftPart.toUnsafe();
+  }
+  
+  // pragma MARK: std::function<void(const std::string& /* state */)>
+  Func_void_std__string create_Func_void_std__string(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_std__string::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const std::string& state) mutable -> void {
+      swiftClosure.call(state);
+    };
+  }
+  
+  // pragma MARK: std::function<void(const BleScanResult& /* result */)>
+  Func_void_BleScanResult create_Func_void_BleScanResult(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_BleScanResult::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const BleScanResult& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::function<void(const std::shared_ptr<HybridBleConnectionSpec>& /* result */)>
+  Func_void_std__shared_ptr_HybridBleConnectionSpec_ create_Func_void_std__shared_ptr_HybridBleConnectionSpec_(void* NON_NULL swiftClosureWrapper) noexcept {
+    auto swiftClosure = NitroBplzLabel::Func_void_std__shared_ptr_HybridBleConnectionSpec_::fromUnsafe(swiftClosureWrapper);
+    return [swiftClosure = std::move(swiftClosure)](const std::shared_ptr<HybridBleConnectionSpec>& result) mutable -> void {
+      swiftClosure.call(result);
+    };
+  }
+  
+  // pragma MARK: std::shared_ptr<HybridBluetoothLESpec>
+  std::shared_ptr<HybridBluetoothLESpec> create_std__shared_ptr_HybridBluetoothLESpec_(void* NON_NULL swiftUnsafePointer) noexcept {
+    NitroBplzLabel::HybridBluetoothLESpec_cxx swiftPart = NitroBplzLabel::HybridBluetoothLESpec_cxx::fromUnsafe(swiftUnsafePointer);
+    return std::make_shared<margelo::nitro::bplzlabel::HybridBluetoothLESpecSwift>(swiftPart);
+  }
+  void* NON_NULL get_std__shared_ptr_HybridBluetoothLESpec_(std__shared_ptr_HybridBluetoothLESpec_ cppType) {
+    std::shared_ptr<margelo::nitro::bplzlabel::HybridBluetoothLESpecSwift> swiftWrapper = std::dynamic_pointer_cast<margelo::nitro::bplzlabel::HybridBluetoothLESpecSwift>(cppType);
+    #ifdef NITRO_DEBUG
+    if (swiftWrapper == nullptr) [[unlikely]] {
+      throw std::runtime_error("Class \"HybridBluetoothLESpec\" is not implemented in Swift!");
+    }
+    #endif
+    NitroBplzLabel::HybridBluetoothLESpec_cxx& swiftPart = swiftWrapper->getSwiftPart();
+    return swiftPart.toUnsafe();
+  }
 
 } // namespace margelo::nitro::bplzlabel::bridge::swift

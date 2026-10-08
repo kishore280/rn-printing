@@ -1,5 +1,6 @@
 import { NativeModuleMissingError } from './errors';
 import type { BplzCodec } from './specs/BplzCodec.nitro';
+import type { BluetoothLE } from './specs/BluetoothLE.nitro';
 import type { ClassicBluetooth } from './specs/ClassicBluetooth.nitro';
 
 /**
@@ -11,6 +12,7 @@ import type { ClassicBluetooth } from './specs/ClassicBluetooth.nitro';
  */
 let codec: BplzCodec | null | undefined;
 let classic: ClassicBluetooth | null | undefined;
+let ble: BluetoothLE | null | undefined;
 
 function create<T extends object>(name: string): T | null {
   try {
@@ -48,6 +50,16 @@ export function getClassicBluetooth(): ClassicBluetooth | null {
 
 export function setClassicBluetooth(value: ClassicBluetooth | null | undefined): void {
   classic = value;
+}
+
+/** The Bluetooth Low Energy object (Android and iOS), or null. */
+export function getBluetoothLE(): BluetoothLE | null {
+  if (ble === undefined) ble = create<BluetoothLE>('BluetoothLE');
+  return ble;
+}
+
+export function setBluetoothLE(value: BluetoothLE | null | undefined): void {
+  ble = value;
 }
 
 /** An ArrayBuffer with exactly the bytes of `data`. Copies only when the view is a slice of a bigger buffer. */

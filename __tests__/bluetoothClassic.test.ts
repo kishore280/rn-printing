@@ -1,6 +1,7 @@
 import { BluetoothClassic, BluetoothClassicTransport } from '../src/transports/bluetoothClassic';
 import { setClassicBluetooth } from '../src/native';
 import { TransportError } from '../src/errors';
+import { ZplLabel } from '../src/zpl';
 import type { ClassicBluetooth } from '../src/specs/ClassicBluetooth.nitro';
 import type { ClassicConnection } from '../src/specs/ClassicConnection.nitro';
 
@@ -72,5 +73,22 @@ describe('Bluetooth Classic over the native object', () => {
   ])('maps the Kotlin message "%s" to %s', async (message, code) => {
     setClassicBluetooth({ connect: async () => { throw new Error(message); } } as unknown as ClassicBluetooth);
     await expect(new BluetoothClassicTransport('AA:BB:CC:DD:EE:FF').connect()).rejects.toMatchObject({ code });
+  });
+});
+
+describe('Bluetooth Classic carries any bytes (BPLZ, binary images)', () => {
+  afterEach(() => setClassicBluetooth(undefined));
+
+  it('passes all 256 byte values and a whole ZPL label to the native write, unchanged', async () => {
+    const { conn, log } = fakeConnection();
+    setClassicBluetooth({ connect: async () => conn } as unknown as ClassicBluetooth);
+    const t = new BluetoothClassicTransport('AA:BB:CC:DD:EE:FF');
+    await t.connect();
+    const all = Uint8Array.from({ length: 256 }, (_, i) => i);
+    await t.write(all);
+    const zpl = ZplLabel.fromMm(50, 30).text(20, 20, 'Hello').toBytes();
+    await t.write(zpl);
+    expect(log[0]?.bytes).toEqual(Array.from(all));
+    expect(log[1]?.bytes).toEqual(Array.from(zpl));
   });
 });

@@ -2,6 +2,9 @@ import type { Bitmap1bpp } from './bitmap';
 import { asciiToString, utf8Encode } from './encoding';
 import { int } from './validate';
 
+/** The most bytes one ^GF field holds (Zebra ZPL II guide, ^GF: the byte counts are 1 to 99999). */
+export const MAX_GF_BYTES = 99999;
+
 export type Rotation = 'N' | 'R' | 'I' | 'B';
 
 export interface LabelOptions {
@@ -200,7 +203,16 @@ export class ZplLabel {
    * ZPL ASCII-compressed hex. Make it once, then print the label as often as you like.
    */
   image(x: number, y: number, bitmap: Bitmap1bpp, compressed: Uint8Array): this {
+    int('bitmap.height', bitmap.height, 1);
+    int('bitmap.bytesPerRow', bitmap.bytesPerRow, 1);
+    if (bitmap.bytesPerRow * 8 < bitmap.width) {
+      throw new RangeError(`bitmap.bytesPerRow (${bitmap.bytesPerRow}) is too small for width ${bitmap.width}`);
+    }
     const total = bitmap.bytesPerRow * bitmap.height;
+    // ^GF takes 1 to 99999 bytes. A bigger count is set to the limit and the image is cut without a message (Zebra ZPL II guide, ^GF).
+    if (total > MAX_GF_BYTES) {
+      throw new RangeError(`image has ${total} bytes; ^GF holds at most ${MAX_GF_BYTES}. Split it into several images.`);
+    }
     this.parts.push(
       `^FO${int('x', x)},${int('y', y)}^GFA,${total},${total},${bitmap.bytesPerRow},`,
       compressed,
@@ -331,13 +343,52 @@ export const zplSettings = {
     const mt = method ? `^MT${method === 'thermal-transfer' ? 'T' : 'D'}` : '';
     return `^XA^MN${mn}${mt}^XZ`;
   },
-  /** ^PR: print speed in inches per second (1 to 14). */
+  /**
+   * ^PR: print speed in inches per second, 2 to 14 (the SNBC SDK range; Zebra's guide lists 2 to 12).
+   * A speed above the printer's maximum runs at the maximum. Test print quality at the new speed.
+   */
   speed(ips: number): string {
-    return `^XA^PR${int('speed', ips, 1)}^XZ`;
+    int('speed', ips, 2);
+    if (ips > 14) throw new RangeError('speed must be 2 to 14');
+    return `^XA^PR${ips}^XZ`;
   },
-  /** ~SD: darkness 0 to 30. */
+  /** ~SD: darkness 0 to 30, two digits. Source: Zebra ZPL II guide, ~SD. A higher speed may need more darkness. */
   darkness(level: number): string {
-    return `~SD${String(int('darkness', level)).padStart(2, '0')}`;
+    int('darkness', level);
+    if (level > 30) throw new RangeError('darkness must be 0 to 30');
+    return `~SD${String(level).padStart(2, '0')}`;
+  },
+  /** ^MD: change the darkness by -30 to 30 from its current value. Not kept after power off. Source: Zebra ZPL II guide, ^MD. */
+  darknessChange(change: number): string {
+    if (!Number.isFinite(change) || Math.round(change) !== change || change < -30 || change > 30) {
+      throw new RangeError('darkness change must be an integer from -30 to 30');
+    }
+    return `^XA^MD${change}^XZ`;
+  },
+  /**
+   * ~TA: move the rest position of the label for tearing or cutting, -120 to 120 dot rows.
+   * Written as a sign and three digits (`~TA+010`), as the SNBC SDK does. Zebra's guide says fewer than three digits are ignored.
+   */
+  tearOff(dots: number): string {
+    if (!Number.isFinite(dots) || Math.round(dots) !== dots || dots < -120 || dots > 120) {
+      throw new RangeError('tear-off must be an integer from -120 to 120');
+    }
+    return `~TA${dots < 0 ? '-' : '+'}${String(Math.abs(dots)).padStart(3, '0')}`;
+  },
+  /**
+   * ^JUS: save the current settings, so they stay after the printer is switched off. Without it, ~SD, ^MD, ^PR, ^MM, ^MN and ^MT last
+   * until power off, and a restart brings back the saved ones. Source: Zebra ZPL II guide, ^JU. NOT checked on the SNBC printer.
+   */
+  saveSettings(): string {
+    return '^XA^JUS^XZ';
+  },
+  /** ^JUR: bring back the saved settings (undo what was tried). Source: Zebra ZPL II guide, ^JU. NOT checked on the SNBC printer. */
+  recallSettings(): string {
+    return '^XA^JUR^XZ';
+  },
+  /** ~WC: print the printer's configuration label. Only works when the printer is idle. Source: Zebra ZPL II guide, ~WC. */
+  configLabel(): string {
+    return '~WC';
   },
   /** ~JC: measure the media length (calibrate). */
   calibrate(): string {
@@ -350,9 +401,16 @@ export const zplSettings = {
   pause(): string {
     return '~PP';
   },
-  /** ~JA: cancel all queued formats. */
+  /** ~JA: cancel all formats in the buffer and any batch that prints; the printer stops after the label it prints now. Source: Zebra ZPL II guide, ~JA. */
   cancelAll(): string {
     return '~JA';
+  },
+  /**
+   * ~JR: reset the printer like a power cycle (clears the buffers and DRAM, runs the power-on test).
+   * The Bluetooth link may drop for a moment. Source: Zebra ZPL II guide, ~JR.
+   */
+  reset(): string {
+    return '~JR';
   },
   /** ~HS asks for host status. ~HQES asks for the error and warning flags. */
   hostStatusQuery(): string {

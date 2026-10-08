@@ -1,5 +1,45 @@
 export { LabelPrinter } from './printer';
-export type { StatusOptions, Printable } from './printer';
+export { ERROR_CODES, errorCodeInfo, isKnownErrorCode } from './errorCodes';
+export type { ErrorCodeInfo, TransportErrorCode } from './errorCodes';
+export { HEALTH_GRACE_MS, HARD_FAILS_FOR_LOST } from './linkHealth';
+export type { LinkHealth } from './linkHealth';
+export type { StatusOptions, Printable, PrintAllOptions, WaitForPrinterOptions } from './printer';
+
+export { designToZpl, designToLabel, checkDesign, vegMinimums, vegSymbolZpl } from './design';
+export type {
+  LabelDesign,
+  DesignItem,
+  DesignText,
+  DesignBox,
+  DesignBarcode,
+  DesignQr,
+  DesignVeg,
+  DesignImage,
+  DesignIssue,
+} from './design';
+
+export { PROBES, parseConfigReport, parseKeyValues, parseMemory, replyLines, settingsFromConfig, configValue } from './probe';
+export type { Probe, ProbeGroup, ConfigLine, CurrentSettings, MemoryInfo, KeyValue } from './probe';
+
+export { parseZpl, validateZpl, decodeGfaData } from './zplParse';
+export type {
+  ZplDocument,
+  ZplLabelDoc,
+  ZplElement,
+  ZplText,
+  ZplBarcode1D,
+  ZplQr,
+  ZplOtherCode,
+  ZplBox,
+  ZplDiagonal,
+  ZplEllipse,
+  ZplImage,
+  ZplIssue,
+  ZplSeverity,
+  ZplRotation,
+  ZplSymbology,
+  ZplParseOptions,
+} from './zplParse';
 
 export { ZplLabel, testLabel, mmToDots, escapeFieldData, zplSettings, zplDownloadImage } from './zpl';
 export type {
@@ -24,14 +64,32 @@ export { BplaLabel } from './bpla';
 export type { BplaTextOptions, BplaBarcodeOptions, BplaRotation } from './bpla';
 
 
-export { parseHostStatus, parseExtendedStatus } from './status';
-export type { PrinterStatus, ExtendedStatus } from './status';
+export { parseHostStatus, parseExtendedStatus, parseHostIdentification } from './status';
+export type { PrinterStatus, ExtendedStatus, PrinterIdentity } from './status';
 
-export type { Transport, ReadOptions } from './transport';
+export type { Transport, ReadOptions, WriteOptions, LinkState, LinkEvent } from './transport';
 export { BluetoothClassic, BluetoothClassicTransport } from './transports/bluetoothClassic';
 export type { PairedDevice, BluetoothClassicOptions } from './transports/bluetoothClassic';
-export { BleTransport, blePlxClient } from './transports/ble';
-export type { BleClient, BleCharacteristicInfo, BleTransportOptions, BlePlxManagerLike } from './transports/ble';
+export { BluetoothLE, BluetoothLETransport, bleFilters } from './transports/bluetoothLE';
+export type {
+  BleAdapterState,
+  BleDevice,
+  AbortSignalLike,
+  BluetoothLEScanOptions,
+  BleConnectOptions,
+  BleConnectionState,
+  BleConnectionStateEvent,
+  BlePrinterProfile,
+  BluetoothLETransportOptions,
+  BleWriteOptions,
+  BleWriteStats,
+  BleDiagnostics,
+  BleDeviceConnection,
+} from './transports/bluetoothLE';
+export { describeGatt } from './transports/bleGatt';
+export { characteristicName, decodeValue, hexBytes, serviceName, shortUuid } from './transports/sig';
+export type { BleGattReading } from './transports/bluetoothLE';
+export type { BleGattCharacteristic, BleSelection, BleSelectionOptions, BleSelector, BleWriteMode } from './transports/bleGatt';
 export { TcpTransport } from './transports/tcp';
 export type { TcpTransportOptions, TcpSocketLike } from './transports/tcp';
 

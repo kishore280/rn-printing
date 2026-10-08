@@ -22,6 +22,8 @@ Pod::Spec.new do |s|
     "cpp/**/*.{hpp,cpp}",
   ]
 
+  s.frameworks = 'CoreBluetooth'
+
   load 'nitrogen/generated/ios/NitroBplzLabel+autolinking.rb'
   add_nitrogen_files(s)
 

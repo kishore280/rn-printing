@@ -6,6 +6,7 @@ import {
   retry,
   type RetryPolicy,
 } from 'cockatiel';
+import { errorCodeInfo } from './errorCodes';
 import { NativeModuleMissingError, TransportError, UnsupportedPlatformError } from './errors';
 
 /**
@@ -62,12 +63,10 @@ export function resolveReconnect(o: ReconnectOptions | boolean | undefined): Res
   return out;
 }
 
-/** Codes where a new attempt can help. Everything else needs the user to act (permission, Bluetooth off, wrong address). */
-const TRANSIENT = new Set(['E_CONNECT', 'E_NOT_CONNECTED', 'E_TIMEOUT', 'E_WRITE', 'E_READ', 'E_DISCONNECTED']);
 
 export function isTransient(e: unknown): boolean {
   if (e instanceof UnsupportedPlatformError || e instanceof NativeModuleMissingError) return false;
-  if (e instanceof TransportError) return e.code === undefined || TRANSIENT.has(e.code);
+  if (e instanceof TransportError) return e.code === undefined || (errorCodeInfo(e.code)?.transient ?? false);
   return true;
 }
 
@@ -75,7 +74,7 @@ export function isTransient(e: unknown): boolean {
  * Build the retry policy. cockatiel's `maxAttempts` counts RETRIES (not the first
  * try), so it is `maxAttempts - 1` here.
  */
-export function connectPolicy(o: ResolvedReconnect, emit: (e: ConnectionEvent) => void): RetryPolicy {
+function connectPolicy(o: ResolvedReconnect, emit: (e: ConnectionEvent) => void): RetryPolicy {
   const shape = { initialDelay: o.initialDelayMs, maxDelay: o.maxDelayMs, exponent: o.backoffMultiplier };
   const backoff = o.jitter
     ? new ExponentialBackoff({ ...shape, generator: decorrelatedJitterGenerator })
