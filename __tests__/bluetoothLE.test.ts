@@ -38,6 +38,8 @@ const serialGatt = (): BleCharacteristic[] => [
 ];
 
 interface FakeLinkOptions {
+  /** The phone reports a bond already (the printer may have forgotten it). */
+  bondedAlready?: boolean;
   gatt?: BleCharacteristic[];
   mtu?: number;
   maxWrite?: (withResponse: boolean) => number;
@@ -91,7 +93,7 @@ class FakeLink {
           self.inFlight--;
         }
       },
-      bondState: 'none',
+      get bondState() { return self.opts.bondedAlready ? 'bonded' : 'none'; },
       bond: async () => {
         self.bonds++;
         return self.opts.bondImpl ? self.opts.bondImpl(self) : true;
@@ -1398,6 +1400,15 @@ describe('BluetoothLETransport: bonding', () => {
     expect(error.code).toBe('E_AUTH');
     expect(error.nothingSent).toBe(true);
     expect(fake.links[0]?.bonds).toBe(1);
+  });
+
+  it('names a stale pairing: the phone has a bond, the device refuses, and a new bond cannot help', async () => {
+    fakeNative({ bondedAlready: true, writeImpl: async () => { throw auth(); } });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const error = (await t.write(bytes(10)).catch((e: TransportError) => e)) as TransportError;
+    expect(error.code).toBe('E_AUTH');
+    expect(error.message).toContain('forget the device');
   });
 
   it('with bond set to never, reports E_AUTH and does not pair', async () => {

@@ -795,11 +795,25 @@ export class BluetoothLETransport implements Transport {
       const error = classify(e, 'E_WRITE');
       if (error.code !== 'E_AUTH' || (this.settings.bond ?? 'auto') === 'never' || this.bondTried) throw error;
       this.bondTried = true;
+      // The phone may already hold a bond the printer has forgotten. Android then reports BONDED but the link stays
+      // unencrypted (Nordic's BleManagerHandler documents this), and iOS reports peerRemovedPairingInformation.
+      const hadBond = link.bondState === 'bonded';
       const bonded = await wrap(link.bond(this.settings.bondTimeoutMs ?? 30000), 'E_AUTH');
       if (!bonded) throw new TransportError('The device was not paired. Accept the pairing request on the phone, then try again.', 'E_AUTH');
       // Some devices close the link after pairing. The caller connects again; the device is paired now.
       if (!link.isConnected) throw new TransportError('The link closed after pairing. Connect again.', 'E_DISCONNECTED');
-      return op();
+      try {
+        return await op();
+      } catch (again) {
+        const second = classify(again, 'E_WRITE');
+        if (second.code === 'E_AUTH' && hadBond) {
+          throw new TransportError(
+            'The phone has a pairing for this device that the device no longer knows. Open the Bluetooth settings, forget the device, then connect again.',
+            'E_AUTH'
+          );
+        }
+        throw second;
+      }
     }
   }
 
