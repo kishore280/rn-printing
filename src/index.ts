@@ -18,6 +18,16 @@ export type {
   DesignIssue,
 } from './design';
 
+export { layoutReceipt, receiptToBytes, checkReceipt, isPrintable, ensureStructuredClone, RECEIPT_CODEPAGES, RECEIPT_MIN_COLUMNS, RECEIPT_MAX_COLUMNS } from './receipt';
+export type {
+  ReceiptAlign,
+  ReceiptPaper,
+  ReceiptBlock,
+  ReceiptDesign,
+  ReceiptLine,
+  ReceiptIssue,
+} from './receipt';
+
 export { PROBES, parseConfigReport, parseKeyValues, parseMemory, replyLines, settingsFromConfig, configValue } from './probe';
 export type { Probe, ProbeGroup, ConfigLine, CurrentSettings, MemoryInfo, KeyValue } from './probe';
 
