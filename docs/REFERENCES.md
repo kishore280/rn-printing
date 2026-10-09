@@ -122,6 +122,16 @@ Sources: web search results of Microchip's developer help and Zebra's guides (th
   (this printer's self-test shows 864 dots; no standard ZPL query gives it). Both are Zebra commands; an SNBC printer may answer in another shape or not at all.
 - **What the app's test screen does with it.** Before each print test it asks the printer for its status and does not start when the printer reports a problem. A second after the test it asks again and writes both answers into the report, so "the phone sent it" can be told from "the printer printed it".
 
+## Real replies of the owner's TVSE LP 46 Dlite (2026-10-09)
+
+Copied from the app's "What the printer says" page (firmware V56.17.9Z, `~WN01@version~` says FV1.050.00). Tests: `__tests__/probe.test.ts` and `__tests__/status.test.ts`, "real replies".
+
+- `~HI` answers `TVSE LP 46 Dlite-200dpi,V56.17.9Z,8,8172KB`: the third field is 8 dots per mm (203 dpi).
+- `~HS`, `~HQES`, `~HM`, `~HQOD`, `~HQPH`, `~HQJT`, `~HQSN`, `~HQMA`, `^HH` and the two `~WN` reads all answer. The parsers read `~HS`, `~HQES`, `~HI`, `~HM` and `^HH` correctly. The ready printer gives no error and no warning.
+- `^HH` shows PRINT WIDTH 856 and LABEL LENGTH 178 here, and `~HS` shows `0178`. The first self-test showed 864 and 561. So these two are settings that a job changed (our `^PW` and `^LL`), not facts of the printer. Do not use them as the paper size.
+- The Bluetooth table has a transparent serial service (`49535343-…`, write and notify) and more services (`0xFF00`, `0xFF10`). No UUID is built into `src/`; the package chooses at run time.
+- Not seen: a reply with a fault (paper out, head open, paused).
+
 ## Compiled, not run
 
 - **C++:** `HybridBplzCodec` and the core compile against the real Nitro and JSI headers (`g++ -std=c++20 -fsyntax-only`).
@@ -135,7 +145,7 @@ Sources: web search results of Microchip's developer help and Zebra's guides (th
 - Anything on a real device or a real SNBC printer.
 - The Android and iOS native builds (Gradle, CMake, Xcode). The build files come from the official scaffold.
 - The BPLA row and column units, and the `Q`, `E`, `<STX>L` framing.
-- The `~HS` and `~HQES` replies of the SNBC firmware.
+- The meaning of the `~HS` and `~HQES` fields when the printer has a fault. Only the "ready" replies were seen (see "Real replies").
 - BLE on a real phone and printer (Android and iOS), with this package's own code. See the manual test in [BLE.md](BLE.md).
 - The Swift code: it was never compiled.
 - Speed on Hermes or on a phone CPU. `npm run bench` measures Node (V8) only.

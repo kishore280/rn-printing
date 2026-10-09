@@ -157,7 +157,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
-| `~HS` / `~HQES` replies | NOT verified on the printer. |
+| `~HS` / `~HQES` / `~HI` / `~HM` / `^HH` replies | Real replies of a ready printer are in the tests (`docs/REFERENCES.md`). Replies with a fault were NOT seen. |
 | Hermes / phone speed | NOT measured. |
 
 ## Open items
