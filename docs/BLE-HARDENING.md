@@ -214,3 +214,13 @@ Read in this round (shallow clones, current `main` of each): AOSP `packages/modu
 | Linux Bluetooth timeouts: `HCI_LE_CONN_TIMEOUT` 20 s, `HCI_ACL_CONN_TIMEOUT` 20 s, `HCI_PAIRING_TIMEOUT` 60 s, `HCI_ACL_TX_TIMEOUT` 45 s, `SMP_TIMEOUT` 30 s. BlueZ `ATT_TIMEOUT_INTERVAL` 30 s. | `include/net/bluetooth/hci.h`, `net/bluetooth/smp.c`, `bluez/src/shared/att.c` | Our connect timeout (20 s class) and bond timeout (30 s = SMP timeout) are in line. A write timeout above 30 s would be above the ATT transaction timeout, so keep write limits at or below it. |
 
 Not read: CoreBluetooth and the iOS Bluetooth daemon (closed source), the Windows stack (closed source), Bluedroid's SMP state machine in detail.
+
+## 10. Round 5: a removed printer must stay closed (2026-10-09)
+
+**Found on the owner's phone** (TVS-like receipt printer, nRF Connect open beside the app): "Print a test receipt" kept loading, the person pressed Remove printer, the app showed no printer, but nRF Connect still showed the printer as connected, and a new search did not find it.
+
+**Cause.** `LabelPrinter.dispose()` closed the transport, but a connect that was still inside its retry loop (`connectWithRetry`: up to 3 tries, 300 ms to 2 s apart, each up to 10 s) went on: its next try opened the link again. A BLE peripheral that has a central connected stops advertising, so the scan could not see it. A printer that takes one connection at a time (many cheap ones do) was now held by a printer object nobody used.
+
+**Fix** (0.3.1). `dispose()` sets a flag. Every try of the retry loop, and every new job, checks it first and throws `E_CANCELLED` (not transient, so the loop stops at once). A native connect that is already running when `dispose()` is called is closed by the transport's generation check as soon as it finishes (`bluetoothLE.ts`: "The connection was closed while it opened"). Tests: `printer.test.ts`, "LabelPrinter dispose".
+
+**Not fixed here, and worth knowing.** A native connect in flight cannot be aborted from JavaScript: it ends at its own timeout (10 s by default). Until then the printer shows as connected to the phone.

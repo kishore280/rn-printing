@@ -61,6 +61,8 @@ export class LabelPrinter {
   private readonly onEvent: (event: ConnectionEvent) => void;
   private healthState: HealthState = HEALTH_START;
   private healthTimer: ReturnType<typeof setTimeout> | null = null;
+  /** `dispose()` was called: this printer must never open its link again (a connect that is still retrying stops at its next try). */
+  private disposed = false;
   private readonly healthListeners = new Set<(health: LinkHealth) => void>();
   private readonly stopLinkEvents: () => void;
 
@@ -128,6 +130,7 @@ export class LabelPrinter {
 
   /** Close the link and stop the printer's timers and listeners. Call it when the printer object is thrown away. */
   async dispose(): Promise<void> {
+    this.disposed = true;
     this.stopLinkEvents();
     if (this.healthTimer) clearTimeout(this.healthTimer);
     this.healthTimer = null;
@@ -137,13 +140,30 @@ export class LabelPrinter {
 
   /** Open the link (with retry) if it is closed. */
   private async ensureConnected(): Promise<void> {
+    this.assertNotDisposed();
     if (await this.transport.isConnected().catch(() => false)) return;
     await this.open();
   }
 
+  /**
+   * A printer that was disposed stays closed. Without this, a connect that was still retrying (the printer busy, out of range) opened the link
+   * AFTER the app removed the printer: it stayed connected, did not advertise, and a new search could not find it. `E_CANCELLED` is not
+   * transient, so the retry loop stops at once.
+   */
+  private assertNotDisposed(): void {
+    if (this.disposed) throw new TransportError('The printer was closed', 'E_CANCELLED');
+  }
+
   private async open(): Promise<void> {
     await this.transport.disconnect().catch(() => undefined);
-    await connectWithRetry(() => this.transport.connect(), this.reconnect, this.onEvent);
+    await connectWithRetry(
+      () => {
+        this.assertNotDisposed();
+        return this.transport.connect();
+      },
+      this.reconnect,
+      this.onEvent
+    );
   }
 
   /**
