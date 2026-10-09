@@ -114,6 +114,20 @@ const FONT0_RATIO = 1;
 const MIN_SCALABLE_DOTS = 10;
 
 /**
+ * Code 128 needs clear space before its bars: 10 times the narrowest bar (Zebra ZPL II guide, "Bar Codes"). This is the one place that says so:
+ * `checkDesign` warns with it, and an app that picks the bar width for a code uses `thickestBarsForClearance`, so the two never disagree.
+ */
+export const QUIET_ZONE_MODULES = 10;
+
+/** The clear space, in dots, that bars of `moduleWidth` dots need before them. */
+export const quietZoneDots = (moduleWidth: number): number => QUIET_ZONE_MODULES * moduleWidth;
+
+/** The thickest bars, in dots, that still have their quiet zone in `clearDots` of space before them. Never under 1: the thinnest bars the printer draws. */
+export function thickestBarsForClearance(clearDots: number): number {
+  return Math.max(1, Math.floor(clearDots / QUIET_ZONE_MODULES));
+}
+
+/**
  * Minimum size of the veg / non-veg symbol by the area of the principal display panel.
  * Source: FSSAI Labelling and Display Regulations 2020, regulation 5(4)(c). Millimetres.
  */
@@ -183,8 +197,8 @@ export function checkDesign(design: LabelDesign): DesignIssue[] {
       });
     }
     if (it.kind === 'barcode') {
-      // A bar code needs clear space each side: about ten narrow bars (Zebra ZPL II guide, "Bar Codes").
-      const need = 10 * (it.moduleWidth ?? 2);
+      // A bar code needs clear space each side: ten narrow bars (see `QUIET_ZONE_MODULES`).
+      const need = quietZoneDots(it.moduleWidth ?? 2);
       if (it.xMm * dpm < need) {
         issues.push({
           severity: 'warning',
