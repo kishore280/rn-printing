@@ -224,3 +224,21 @@ Not read: CoreBluetooth and the iOS Bluetooth daemon (closed source), the Window
 **Fix** (0.3.1). `dispose()` sets a flag. Every try of the retry loop, and every new job, checks it first and throws `E_CANCELLED` (not transient, so the loop stops at once). A native connect that is already running when `dispose()` is called is closed by the transport's generation check as soon as it finishes (`bluetoothLE.ts`: "The connection was closed while it opened"). Tests: `printer.test.ts`, "LabelPrinter dispose".
 
 **Not fixed here, and worth knowing.** A native connect in flight cannot be aborted from JavaScript: it ends at its own timeout (10 s by default). Until then the printer shows as connected to the phone.
+
+## 11. Round 6: a pairing that fails must not be a retry loop (2026-10-09)
+
+**Found on the owner's phone** (SPRT SP-POS894UED, ESC/POS): the BLE pairing dialog opened again and again, and entering the PIN did not help. Source: the owner's agent, rn-printing issue 13 (adb logcat). The order in the log:
+
+1. `connectGatt` succeeds (status 0).
+2. The bond state changes to BONDING within milliseconds. The app did not ask for it: the package calls `createBond` only after an `E_AUTH` (`bond()`), and the printer asks for security by itself when the link opens, so Android starts the pairing.
+3. The pairing fails (`smp_proc_pairing_cmpl: Pairing process has failed ... SMP_CONFIRM_VALUE_ERR`).
+4. The printer closes the link: `GATT_CONN_TERMINATE_PEER_USER`, GATT status 19.
+5. Android removes the bond. The next connect starts again.
+
+**Cause in this package.** Status 19 became `E_CONNECT` or `E_DISCONNECTED`. Both are in `TRANSIENT` (`reconnect.ts`), so `connectWithRetry` tried again, and every try opened a new pairing dialog. `needsPairing()` knows only statuses 5, 15 and 137, which are for operations that fail with an authentication error, not for a link the device closes after a failed pairing.
+
+**Fix** (0.3.2, Kotlin). `PairingWatch` (plain Kotlin, JVM test `test-native/PairingWatchTest.kt`) remembers a bond change from BONDING to NONE of this device while the connection lives (`HybridBleConnection.watchPairing`, a receiver for `ACTION_BOND_STATE_CHANGED`, removed when the GATT object closes). A link that closes (or an operation that finds it closed) within 15 s of that failure is reported as `E_AUTH`, with words that say what to do. `E_AUTH` is not in `TRANSIENT`, so the loop stops. With `bond: 'auto'` the TypeScript side still tries `createBond` once for the connection and then reports `E_AUTH`; with `bond: 'never'` it reports `E_AUTH` at once. Never a loop.
+
+**Root cause on the printer, and the fix there.** The printer had its own "Enable Bluetooth Password" setting on. With it off, BLE worked. The vendor Setting Tool (V3.58, page `POS8811/POS891/2/3/4/5/6`) sends `1B 09` (enter setup mode), `1B 27 00` (Bluetooth password: No; `01` = Yes) and `1B 15` (leave setup mode and save) in one session. The same bytes alone, without the wrapper, had no effect. The printer does not reply. These bytes are from the owner's agent (Frida hook on `WriteFile`); we did not run them ourselves. They belong to this one printer family: do not send them to another printer.
+
+**Not done.** Swift: iOS has no bond API and pairs by itself; there the close is still reported as a disconnect. Not run on a device: the Kotlin change is compiled and its rule is tested on a JVM only. The exact reason for `SMP_CONFIRM_VALUE_ERR` is not proven (our guess: the phone offers pairing with no passkey and the printer expects one).

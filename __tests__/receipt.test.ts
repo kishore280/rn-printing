@@ -1,5 +1,5 @@
 import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
-import { checkReceipt, ensureStructuredClone, isPrintable, layoutReceipt, receiptToBytes } from '../src/receipt';
+import { DEFAULT_CUT_FEED_DOTS, checkReceipt, ensureStructuredClone, feedDotsBytes, isPrintable, layoutReceipt, receiptToBytes } from '../src/receipt';
 import type { ReceiptBlock, ReceiptDesign, ReceiptLine } from '../src/receipt';
 
 const paper = (columns = 32, cutter = true) => ({ columns, dotsWidth: 384, cutter });
@@ -250,9 +250,35 @@ describe('bytes', () => {
         '1d286b0400314132001d286b03003143051d286b03003145311d286b06003150306162631d286b0300315130', // QR: model 2, cell 5, level m, data "abc", print
         '0a1b61001b6101', // feed, left, centre
         '1d68401d77031d48021d6b49077b4231323334350a', // barcode height 64, text below, code 128 "12345"
-        '1b61001d56010a', // left, partial cut, feed
+        '1b61001b4ac81d56010a', // left, feed 200 dots (ESC J 200), partial cut, feed
       ].join('')
     );
+  });
+
+  it('feeds before the cut so the last lines are not cut through (200 dots by default)', () => {
+    const bytes = hex(receiptToBytes(design([{ kind: 'cut' }])));
+    expect(bytes).toBe('1b401c2e1b4d00' + '1b4ac8' + '1d56010a');
+  });
+
+  it('takes the feed before the cut from the paper', () => {
+    const d: ReceiptDesign = { paper: { ...paper(), cutFeedDots: 300 }, blocks: [{ kind: 'cut', mode: 'full' }] };
+    expect(hex(receiptToBytes(d))).toBe('1b401c2e1b4d00' + '1b4aff' + '1b4a2d' + '1d56000a');
+    const none: ReceiptDesign = { paper: { ...paper(), cutFeedDots: 0 }, blocks: [{ kind: 'cut' }] };
+    expect(hex(receiptToBytes(none))).toBe('1b401c2e1b4d00' + '1d56010a');
+  });
+
+  it('feedDotsBytes: ESC J in steps of 255, never more than 1020 dots, a bad number gives the default', () => {
+    expect(feedDotsBytes(0)).toEqual([]);
+    expect(feedDotsBytes(10)).toEqual([0x1b, 0x4a, 10]);
+    expect(feedDotsBytes(255)).toEqual([0x1b, 0x4a, 255]);
+    expect(feedDotsBytes(256)).toEqual([0x1b, 0x4a, 255, 0x1b, 0x4a, 1]);
+    expect(feedDotsBytes(5000)).toHaveLength(12);
+    expect(feedDotsBytes(-5)).toEqual([]);
+    expect(feedDotsBytes(Number.NaN)).toEqual(feedDotsBytes(DEFAULT_CUT_FEED_DOTS));
+  });
+
+  it('does not feed before the cut when the paper has no cutter', () => {
+    expect(hex(receiptToBytes(design([{ kind: 'cut' }], 32, false)))).not.toContain('1b4a');
   });
 
   it('feeds four lines when the paper has no cutter', () => {

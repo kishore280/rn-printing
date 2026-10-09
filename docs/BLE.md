@@ -199,6 +199,7 @@ The Classic PIN of a printer does not apply to BLE.
 | Labels print cut, or garbage after a big image | Use `writeMode: 'write'`, or a larger `chunkDelayMs` (try 20), or a smaller `chunkSize`. |
 | Slow big jobs | Use `writeMode: 'withoutResponse'` with a small `chunkDelayMs`, and keep the default MTU request. |
 | iOS cannot find the device by the id from another phone | The iOS id is per phone. Scan again. |
+| `E_AUTH` "closed the link after a failed pairing", or a pairing dialog that opens again and again | The device asks for pairing as soon as the link opens, the pairing fails, and the device closes the link (GATT status 19). Forget the device in the phone's Bluetooth settings (also its Classic entry) and try once. If it still fails, the device has its own Bluetooth password setting: turn it off with the maker's tool. See `docs/BLE-HARDENING.md` section 11. |
 | Printer prints once, then fails on the next job | The printer may hold one central at a time. `disconnect()` after the job, or keep one `LabelPrinter` for the whole session. |
 
 ## Tested hardware
