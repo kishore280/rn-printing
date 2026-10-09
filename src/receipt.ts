@@ -22,11 +22,6 @@ export interface ReceiptPaper {
   columns: number;
   dotsWidth: number;
   cutter: boolean;
-  /**
-   * Dots to feed before a cut (8 dots = 1 mm at 203 dpi). The cutter sits behind the print head, so a cut that comes straight after the last
-   * line cuts through what was printed in the last few centimetres. Default `DEFAULT_CUT_FEED_DOTS`. Only for a paper with a cutter.
-   */
-  cutFeedDots?: number;
 }
 
 export type ReceiptBlock =
@@ -71,24 +66,17 @@ const EMPTY_CELLS_AUTO_MIN = 4;
 const FEED_AFTER_CUT_WITHOUT_CUTTER = 4;
 
 /**
- * Feed before a cut: 200 dots, 25 mm at 203 dpi. A receipt printer cuts at the cutter, which is behind the print head. A cut straight after the
- * last line cut the QR code of a test receipt on the owner's SPRT SP-POS894UED (the code came out on the next piece). Epson's `GS V 65 n` /
- * `GS V 66 n` feed to the cut position by themselves, but we did not check that this printer accepts them: `ESC J n` (feed n dots) is in every
- * ESC/POS printer. The distance is a measured guess for that one printer, not a vendor number: set `paper.cutFeedDots` for another model.
+ * The cut. A receipt printer cuts at its cutter, which sits behind the print head (Epson's TM-T88 class: about 14 mm). A plain cut
+ * (`GS V 0` / `GS V 1`, "function A") cuts where the cutter is NOW, so the last centimetres of what was printed are still between the head
+ * and the cutter and fall on the wrong side: on the owner's SPRT SP-POS894UED the QR code of a test receipt came out on the next piece.
+ * `GS V 65 n` / `GS V 66 n` ("function B") first feeds the paper until the last printed line has reached the cutter, then cuts, so the
+ * printer's own firmware uses its own distance. Epson ESC/POS reference, `GS V`. The vendor's Setting Tool for this printer family sends
+ * `1D 56 42 00` (function B, partial) in its own cut (found in the tool's code, 2026-10-09).
+ * 65 is a full cut and 66 a partial cut (one point left uncut); `n` is extra feed after the cutting position, 0 here (the template's own
+ * `feed` block gives the empty space under the last line). NOT checked on the printer after this change.
  */
-export const DEFAULT_CUT_FEED_DOTS = 200;
-const MAX_CUT_FEED_DOTS = 1020;
-
-/** `ESC J n` (feed n dots, n up to 255), repeated for a longer feed. Pure; tested. */
-export function feedDotsBytes(dots: number): number[] {
-  let left = Math.max(0, Math.min(MAX_CUT_FEED_DOTS, Math.round(Number.isFinite(dots) ? dots : DEFAULT_CUT_FEED_DOTS)));
-  const bytes: number[] = [];
-  while (left > 0) {
-    const n = Math.min(255, left);
-    bytes.push(0x1b, 0x4a, n);
-    left -= n;
-  }
-  return bytes;
+export function cutBytes(mode: 'partial' | 'full'): number[] {
+  return [0x1d, 0x56, mode === 'full' ? 65 : 66, 0];
 }
 
 /**
@@ -565,8 +553,7 @@ export function receiptToBytes(design: ReceiptDesign): Uint8Array {
         if (line.fed) {
           encoder.newline(FEED_AFTER_CUT_WITHOUT_CUTTER);
         } else {
-          encoder.raw(feedDotsBytes(design.paper?.cutFeedDots ?? DEFAULT_CUT_FEED_DOTS));
-          encoder.cut(line.mode);
+          encoder.raw(cutBytes(line.mode));
         }
         break;
     }
