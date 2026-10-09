@@ -18,7 +18,7 @@ export type {
   DesignIssue,
 } from './design';
 
-export { layoutReceipt, receiptToBytes, checkReceipt, isPrintable, ensureStructuredClone, RECEIPT_CODEPAGES, RECEIPT_MIN_COLUMNS, RECEIPT_MAX_COLUMNS } from './receipt';
+export { layoutReceipt, receiptToBytes, feedDotsBytes, DEFAULT_CUT_FEED_DOTS, checkReceipt, isPrintable, ensureStructuredClone, RECEIPT_CODEPAGES, RECEIPT_MIN_COLUMNS, RECEIPT_MAX_COLUMNS } from './receipt';
 export type {
   ReceiptAlign,
   ReceiptPaper,

@@ -45,7 +45,7 @@ interface ReceiptDesign { paper: ReceiptPaper; blocks: ReceiptBlock[] }
   A cell may hold `\n`: it is a hard break, and each part wraps inside the column. A row is as tall as its tallest cell.
   The header is a bold row.
 - `qr` and `barcode` (Code 128) are one line each. Alignment is done by the encoder.
-- `cut`: with a cutter, the encoder cuts. Without one, the bytes are 4 empty lines and the layout line has `fed: true`.
+- `cut`: with a cutter, the bytes are `ESC J n` (feed `paper.cutFeedDots` dots, default 200 = 25 mm, in steps of 255) and then the encoder's cut (`GS V 0` full or `GS V 1` partial). The cutter is behind the print head, so a cut straight after the last line cuts through what was printed in the last centimetres: on the SPRT SP-POS894UED a test receipt lost its QR code to the next piece (owner's photos, 2026-10-09). 200 dots is a guess from that one photo, NOT a vendor number: measure and set `cutFeedDots` for another printer. Without a cutter, the bytes are 4 empty lines and the layout line has `fed: true`. The preview does not show the feed.
 - A letter that no code page holds is shown as `?` in the layout, as the printer prints it.
 - Control characters are removed. A tab is a space.
 

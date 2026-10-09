@@ -48,6 +48,13 @@ class HybridBleConnection(
   @Volatile private var requestedClose = false
 
   /**
+   * A pairing that Android started by itself (the device asked for it when the link opened) and that failed. The device then closes the
+   * link (GATT status 19). That close is reported as `E_AUTH`, not as a radio error that is tried again with a new pairing dialog each time.
+   */
+  private val pairing = PairingWatch()
+  private var pairingReceiver: BroadcastReceiver? = null
+
+  /**
    * Does this phone call onCharacteristicWrite for a write without response? Engineers who read the
    * Android source report that it does: BluetoothGatt keeps its busy flag set for every write, also
    * without response, until onCharacteristicWrite. So the normal path waits for the callback.
@@ -87,6 +94,7 @@ class HybridBleConnection(
   /** Start the connection. Resolves `promise` with this object when the link is up. */
   fun open(timeoutMs: Long, promise: Promise<HybridBleConnectionSpec>) {
     connectPromise = promise
+    watchPairing()
     val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
       device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
     } else {
@@ -114,6 +122,48 @@ class HybridBleConnection(
     if (error == null) connectPromise?.resolve(this) else connectPromise?.reject(error)
   }
 
+  /** Listen for bond changes of this device while the link lives. A failed pairing is the usual reason for status 19 right after a connect. */
+  private fun watchPairing() {
+    pairing.reset()
+    val receiver = object : BroadcastReceiver() {
+      override fun onReceive(c: Context?, intent: Intent?) {
+        if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+        val who = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+        if (who?.address != device.address) return
+        val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR)
+        val before = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR)
+        pairing.onBondState(before, state, System.currentTimeMillis())
+      }
+    }
+    try {
+      context.registerReceiver(receiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
+      pairingReceiver = receiver
+    } catch (_: Exception) {
+      // Without the receiver the old behavior stays: the close is reported as a disconnect.
+    }
+  }
+
+  private fun stopWatchingPairing() {
+    val receiver = pairingReceiver ?: return
+    pairingReceiver = null
+    try {
+      context.unregisterReceiver(receiver)
+    } catch (_: IllegalArgumentException) {
+    }
+  }
+
+  /** The error for a link that closed under an operation: `E_AUTH` when a failed pairing closed it, else `E_DISCONNECTED`. */
+  private fun closedError(message: String): BleError =
+    if (!requestedClose && pairing.closedByFailedPairing(System.currentTimeMillis())) {
+      BleError(
+        "E_AUTH",
+        "The device closed the link after a failed pairing ($message). Remove the old pairing in the phone's Bluetooth settings and try again. " +
+          "If it keeps failing, the device may need its own Bluetooth password turned off.",
+      )
+    } else {
+      BleError("E_DISCONNECTED", message)
+    }
+
   private val callback = object : BluetoothGattCallback() {
     override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
       if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
@@ -127,7 +177,7 @@ class HybridBleConnection(
         closeGatt(g)
         if (!wasConnected) {
           // A printer that wants pairing must not be retried like a radio failure: the person has to accept the system dialog.
-          val code = if (BleSupport.needsPairing(status)) "E_AUTH" else "E_CONNECT"
+          val code = if (BleSupport.needsPairing(status) || pairing.closedByFailedPairing(System.currentTimeMillis())) "E_AUTH" else "E_CONNECT"
           settleConnect(BleError(code, "Cannot connect to ${device.address}: ${BleSupport.gattStatusText(status)}"))
         }
         val reason = when {
@@ -202,6 +252,7 @@ class HybridBleConnection(
       g.close()
     } catch (_: Exception) {
     }
+    stopWatchingPairing()
     closed.countDown()
   }
 
@@ -225,7 +276,7 @@ class HybridBleConnection(
     synchronized(opLock) {
       val deadline = System.currentTimeMillis() + timeoutMs
       while (true) {
-        if (!connected) throw BleError("E_DISCONNECTED", "The device is not connected ($what)")
+        if (!connected) throw closedError("The device is not connected ($what)")
         if (!waitForCallback) {
           // No callback is expected, so there is no operation to guard. Android's "busy" answer is the flow control.
           if (start()) return BluetoothGatt.GATT_SUCCESS
@@ -238,7 +289,7 @@ class HybridBleConnection(
         val op = try {
           guard.begin(kind) // this operation is now the only one that a callback can complete
         } catch (e: IllegalStateException) {
-          throw BleError("E_DISCONNECTED", "${e.message} ($what)")
+          throw closedError("${e.message} ($what)")
         }
         var accepted = false
         try {
@@ -252,7 +303,7 @@ class HybridBleConnection(
               if (probe) guard.abandonTentative(op) else guard.abandon(op, accepted = true)
               throw BleError("E_TIMEOUT", "$what timed out after $timeoutMs ms")
             }
-            if (status == DISCONNECTED) throw BleError("E_DISCONNECTED", "The device disconnected during $what")
+            if (status == DISCONNECTED) throw closedError("The device disconnected during $what")
             return status
           }
         } finally {

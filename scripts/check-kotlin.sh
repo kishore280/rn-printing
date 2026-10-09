@@ -70,4 +70,10 @@ trap 'rm -rf "$OUT" "$TESTOUT"' EXIT
   android/src/main/java/com/margelo/nitro/bplzlabel/GattOpGuard.kt test-native/GattOpGuardTest.kt \
   -d "$TESTOUT" 2>&1 | grep -v '^Picked up' || true
 java -cp "$TESTOUT:$C/kotlinc/lib/kotlin-stdlib.jar" com.margelo.nitro.bplzlabel.GattOpGuardTestKt
+
+# Rules for a pairing that failed while a link was open (plain JVM).
+"$C/kotlinc/bin/kotlinc" -jvm-target 17 -no-reflect -Werror \
+  android/src/main/java/com/margelo/nitro/bplzlabel/PairingWatch.kt test-native/PairingWatchTest.kt \
+  -d "$TESTOUT" 2>&1 | grep -v '^Picked up' || true
+java -cp "$TESTOUT:$C/kotlinc/lib/kotlin-stdlib.jar" com.margelo.nitro.bplzlabel.PairingWatchTestKt
 echo "Kotlin OK"

@@ -22,6 +22,11 @@ export interface ReceiptPaper {
   columns: number;
   dotsWidth: number;
   cutter: boolean;
+  /**
+   * Dots to feed before a cut (8 dots = 1 mm at 203 dpi). The cutter sits behind the print head, so a cut that comes straight after the last
+   * line cuts through what was printed in the last few centimetres. Default `DEFAULT_CUT_FEED_DOTS`. Only for a paper with a cutter.
+   */
+  cutFeedDots?: number;
 }
 
 export type ReceiptBlock =
@@ -64,6 +69,27 @@ export const RECEIPT_MIN_COLUMNS = 16;
 export const RECEIPT_MAX_COLUMNS = 48;
 const EMPTY_CELLS_AUTO_MIN = 4;
 const FEED_AFTER_CUT_WITHOUT_CUTTER = 4;
+
+/**
+ * Feed before a cut: 200 dots, 25 mm at 203 dpi. A receipt printer cuts at the cutter, which is behind the print head. A cut straight after the
+ * last line cut the QR code of a test receipt on the owner's SPRT SP-POS894UED (the code came out on the next piece). Epson's `GS V 65 n` /
+ * `GS V 66 n` feed to the cut position by themselves, but we did not check that this printer accepts them: `ESC J n` (feed n dots) is in every
+ * ESC/POS printer. The distance is a measured guess for that one printer, not a vendor number: set `paper.cutFeedDots` for another model.
+ */
+export const DEFAULT_CUT_FEED_DOTS = 200;
+const MAX_CUT_FEED_DOTS = 1020;
+
+/** `ESC J n` (feed n dots, n up to 255), repeated for a longer feed. Pure; tested. */
+export function feedDotsBytes(dots: number): number[] {
+  let left = Math.max(0, Math.min(MAX_CUT_FEED_DOTS, Math.round(Number.isFinite(dots) ? dots : DEFAULT_CUT_FEED_DOTS)));
+  const bytes: number[] = [];
+  while (left > 0) {
+    const n = Math.min(255, left);
+    bytes.push(0x1b, 0x4a, n);
+    left -= n;
+  }
+  return bytes;
+}
 
 /**
  * The code pages the encoder may use. This is the "epson" list of the encoder 4.0.1 (the generic profile).
@@ -536,8 +562,12 @@ export function receiptToBytes(design: ReceiptDesign): Uint8Array {
         encoder.align(line.align).barcode(line.data, 'code128', { height: line.height, text: line.showText }).align('left');
         break;
       case 'cut':
-        if (line.fed) encoder.newline(FEED_AFTER_CUT_WITHOUT_CUTTER);
-        else encoder.cut(line.mode);
+        if (line.fed) {
+          encoder.newline(FEED_AFTER_CUT_WITHOUT_CUTTER);
+        } else {
+          encoder.raw(feedDotsBytes(design.paper?.cutFeedDots ?? DEFAULT_CUT_FEED_DOTS));
+          encoder.cut(line.mode);
+        }
         break;
     }
   }

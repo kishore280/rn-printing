@@ -157,7 +157,8 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | BLE pairing (bonding) | TypeScript: unit-tested with a fake link (`withBond`, 8 tests). Kotlin: compiled (`createBond`, bond receiver). Swift: no pairing API on iOS; `bond()` is a stub. Not run on a device or the printer. |
 | iOS round 3 (write timer, stale responses, connect attempts, piece size, permission wait) | Swift written from Apple's docs: NOT compiled, NOT run. The permission wait is unit-tested in TypeScript. See `docs/BLE-HARDENING.md` section 8. |
 | BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
-| Receipt layout and ESC/POS bytes (`src/receipt.ts`) | TypeScript unit tests only. The bytes are NOT tested on a printer or an emulator. Hermes (`structuredClone` guard) NOT run. |
+| Receipt layout and ESC/POS bytes (`src/receipt.ts`) | TypeScript unit tests only. A real SPRT SP-POS894UED printed receipts over BLE (owner's photos, 2026-10-09). The feed before the cut (`ESC J`, `cutFeedDots`, default 200) is a guess from those photos and was NOT checked after the change. Hermes (`structuredClone` guard) NOT run. |
+| BLE failed pairing (`PairingWatch`, `E_AUTH` after a close with status 19) | Kotlin: compiled; the rule is tested on a JVM (11 checks). Not run on a device. Swift: not done (iOS pairs by itself). See `docs/BLE-HARDENING.md` section 11. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` / `~HI` / `~HM` / `^HH` replies | Real replies of a ready printer are in the tests (`docs/REFERENCES.md`). Replies with a fault were NOT seen. |
