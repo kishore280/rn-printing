@@ -221,7 +221,14 @@ export class LabelPrinter {
    * `onProgress` is told after each piece, on a transport that sends in pieces.
    */
   print(label: Printable | string, options: WriteOptions = {}): Promise<void> {
-    const bytes = typeof label === 'string' ? utf8Encode(label) : label.toBytes();
+    return this.printRaw(typeof label === 'string' ? utf8Encode(label) : label.toBytes(), options);
+  }
+
+  /**
+   * Send raw bytes, for example ESC/POS from `receiptToBytes`. It uses the same queue, link and reconnect rules as `print`
+   * (one job at a time; no resend after a failed write unless `resendAfterPartialWrite` is set). `print` calls this method.
+   */
+  printRaw(bytes: Uint8Array, options: WriteOptions = {}): Promise<void> {
     return this.exclusive(() => {
       // Cancelled while it waited in the queue: do not even connect.
       if (options.signal?.aborted) throw new TransportError('The print was cancelled before it started', 'E_CANCELLED');
