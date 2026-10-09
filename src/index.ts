@@ -5,7 +5,7 @@ export { HEALTH_GRACE_MS, HARD_FAILS_FOR_LOST } from './linkHealth';
 export type { LinkHealth } from './linkHealth';
 export type { StatusOptions, Printable, PrintAllOptions, WaitForPrinterOptions } from './printer';
 
-export { designToZpl, designToLabel, checkDesign, vegMinimums, vegSymbolZpl } from './design';
+export { designToZpl, designToLabel, checkDesign, vegMinimums, vegSymbolZpl, QUIET_ZONE_MODULES, quietZoneDots, thickestBarsForClearance } from './design';
 export type {
   LabelDesign,
   DesignItem,

@@ -121,3 +121,60 @@ describe('LabelPrinter.ask', () => {
     expect(await printer.ask('~HM')).toBeNull();
   });
 });
+
+/**
+ * Real answers of the owner's TVSE LP 46 Dlite (firmware V56.17.9Z / FV1.050), copied from the app's "What the printer says" page on 2026-10-09.
+ * Only what the parsers read is kept here. They show the shape of each reply; they do not say that the printer's settings are right.
+ */
+describe('real replies of the TVS LP 46 Dlite', () => {
+  const HH = [
+    '\x02  15                  DARKNESS          ',
+    '  5.1 IPS             PRINT SPEED       ',
+    '  +0                  TEAR OFF          ',
+    '  TEAR OFF            PRINT MODE        ',
+    '  GAP/NOTCH           MEDIA TYPE        ',
+    '  WEB                 SENSOR TYPE       ',
+    '  MANUAL              SENSOR SELECT     ',
+    '  THERMAL-TRANS       PRINT METHOD      ',
+    '  856                 PRINT WIDTH       ',
+    '  178                 LABEL LENGTH      ',
+    '  43  IN  1100MM      MAXIMUM LENGTH    ',
+    '  BPLZ                 BPL MODE         ',
+    '  864 FULL            RESOLUTION        ',
+    '  V56.17.9Z           FIRMWARE          ',
+    '  ZAEBYT000895        SERIAL NUMBER     \x03',
+  ].join('\r\n');
+
+  it('^HH: the settings come out in our terms', () => {
+    expect(settingsFromConfig(parseConfigReport(HH))).toEqual({
+      darkness: 15,
+      speedIps: 5.1,
+      printMode: 'tearOff',
+      mediaType: 'label-gap',
+      method: 'thermal-transfer',
+      tearOff: 0,
+      printWidthDots: 856,
+      labelLengthDots: 178,
+    });
+  });
+
+  it('^HH: the command language and the firmware are read as lines', () => {
+    const lines = parseConfigReport(HH);
+    expect(configValue(lines, 'BPL MODE')).toBe('BPLZ');
+    expect(configValue(lines, 'FIRMWARE')).toBe('V56.17.9Z');
+  });
+
+  it('~HM: total, maximum and available memory', () => {
+    expect(parseMemory('\x028172,8172,8172\x03\r\n')).toEqual({ totalKb: 8172, maximumKb: 8172, availableKb: 8172 });
+  });
+
+  it('~HQOD: the print meters are pairs', () => {
+    const raw = '\x02\r\n\r\n  PRINT METERS                          \r\n   TOTAL NONRESETTABLE:          154 "  \r\n   USER RESETTABLE CNTR1:        154 "  \x03';
+    expect(parseKeyValues(raw)).toContainEqual({ key: 'TOTAL NONRESETTABLE', value: '154 "' });
+  });
+
+  it('~WN replies are one line each', () => {
+    expect(replyLines('FV1.050.00 Jul 29 2024 09:35:29\r\n')).toEqual(['FV1.050.00 Jul 29 2024 09:35:29']);
+    expect(replyLines('TVSE LP 46 Dlite\r\n')).toEqual(['TVSE LP 46 Dlite']);
+  });
+});

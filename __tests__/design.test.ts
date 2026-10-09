@@ -1,4 +1,4 @@
-import { checkDesign, designToZpl, vegMinimums, vegSymbolZpl } from '../src/design';
+import { quietZoneDots, thickestBarsForClearance, checkDesign, designToZpl, vegMinimums, vegSymbolZpl } from '../src/design';
 import type { LabelDesign } from '../src/design';
 import { parseZpl } from '../src/zplParse';
 
@@ -158,5 +158,16 @@ describe('more checks from the Zebra guide', () => {
     expect(checkDesign(base([{ kind: 'barcode', xMm: 4, yMm: 2, type: 'code128', data: '1', heightMm: 8 }]))).toEqual([]);
     // Wider bars need more space: 3 dots x 10 = 30 dots = 3.75 mm.
     expect(checkDesign(base([{ kind: 'barcode', xMm: 3, yMm: 2, type: 'code128', data: '1', heightMm: 8, moduleWidth: 3 }]))[0]).toMatchObject({ code: 'QUIET_ZONE' });
+  });
+  it('the bar width an app picks and the quiet zone check agree: bars picked for a space never get a QUIET_ZONE warning', () => {
+    for (const xDots of [10, 16, 20, 29, 30, 40, 57]) {
+      const mw = thickestBarsForClearance(xDots);
+      const warns = checkDesign(base([{ kind: 'barcode', xMm: xDots / 8, yMm: 2, type: 'code128', data: '1', heightMm: 8, moduleWidth: mw }]));
+      // Under 10 dots no bars can have their quiet zone: the thinnest bars are still given, and the check warns.
+      if (xDots >= quietZoneDots(1)) expect(warns).toEqual([]);
+      else expect(warns[0]).toMatchObject({ code: 'QUIET_ZONE' });
+      // One dot thicker would break the rule.
+      if (xDots >= quietZoneDots(1)) expect(xDots).toBeLessThan(quietZoneDots(mw + 1));
+    }
   });
 });
