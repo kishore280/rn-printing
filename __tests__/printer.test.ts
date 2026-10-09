@@ -255,3 +255,34 @@ describe('LabelPrinter.printRaw', () => {
     expect(t.connected).toBe(false);
   });
 });
+
+describe('LabelPrinter dispose', () => {
+  it('stops a connect that is still retrying: the link is never opened after dispose', async () => {
+    let tries = 0;
+    const t = new FakeTransport();
+    t.connect = async () => {
+      tries++;
+      throw new TransportError('busy', 'E_CONNECT');
+    };
+    const p = new LabelPrinter(t, { reconnect: { maxAttempts: 5, initialDelayMs: 30, maxDelayMs: 30, jitter: false } });
+    const pending = p.connect().catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(tries).toBe(1);
+    await p.dispose();
+    const result = await pending;
+    expect(result).toBeInstanceOf(TransportError);
+    expect((result as TransportError).code).toBe('E_CANCELLED');
+    await new Promise((r) => setTimeout(r, 120));
+    expect(tries).toBe(1);
+    expect(t.connected).toBe(false);
+  });
+
+  it('a disposed printer refuses a new job and opens nothing', async () => {
+    const t = new FakeTransport();
+    const p = new LabelPrinter(t);
+    await p.dispose();
+    await expect(p.print('~JC')).rejects.toMatchObject({ code: 'E_CANCELLED' });
+    expect(t.connected).toBe(false);
+    expect(t.written).toHaveLength(0);
+  });
+});
