@@ -214,3 +214,44 @@ describe('LabelPrinter: cancel and a failed write', () => {
     expect(calls()).toBe(1);
   });
 });
+
+describe('LabelPrinter.printRaw', () => {
+  it('sends the bytes as they are, and connects by itself', async () => {
+    const t = new FakeTransport();
+    const raw = Uint8Array.from([0x1b, 0x40, 0x0a, 0xff]);
+    await new LabelPrinter(t).printRaw(raw);
+    expect(t.connected).toBe(true);
+    expect(t.written).toEqual([raw]);
+  });
+
+  it('shares the queue with print: one job at a time, in order', async () => {
+    const order: string[] = [];
+    const t = new FakeTransport();
+    t.write = async (d: Uint8Array) => {
+      order.push('start ' + d.length);
+      await new Promise((r) => setTimeout(r, 10));
+      order.push('end ' + d.length);
+    };
+    const p = new LabelPrinter(t);
+    await Promise.all([p.print('aaa'), p.printRaw(new Uint8Array(2)), p.print('c')]);
+    expect(order).toEqual(['start 3', 'end 3', 'start 2', 'end 2', 'start 1', 'end 1']);
+  });
+
+  it('does not send again after a failed write (it could print twice)', async () => {
+    const t = new FakeTransport();
+    let n = 0;
+    t.write = async () => {
+      n++;
+      throw new TransportError('link lost', 'E_WRITE_FAILED');
+    };
+    await expect(new LabelPrinter(t).printRaw(new Uint8Array(1))).rejects.toBeInstanceOf(TransportError);
+    expect(n).toBe(1);
+  });
+
+  it('stops before it connects when the signal is already aborted', async () => {
+    const t = new FakeTransport();
+    const signal = { aborted: true, addEventListener: () => undefined, removeEventListener: () => undefined };
+    await expect(new LabelPrinter(t).printRaw(new Uint8Array(1), { signal })).rejects.toMatchObject({ code: 'E_CANCELLED' });
+    expect(t.connected).toBe(false);
+  });
+});

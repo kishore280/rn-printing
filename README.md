@@ -129,6 +129,27 @@ Scan, GATT discovery, write type, piece size, flow control, errors, troubleshoot
 
 `BluetoothLETransport` needs no extra BLE package.
 
+### Receipts (ESC/POS)
+
+```ts
+import { layoutReceipt, receiptToBytes, checkReceipt, LabelPrinter } from 'react-native-bplz-label-printer';
+
+const design = {
+  paper: { columns: 42, dotsWidth: 576, cutter: true },
+  blocks: [
+    { kind: 'text', text: 'SRI LAKSHMI STORES', align: 'center', bold: true },
+    { kind: 'rule' },
+    { kind: 'row', left: 'Total', right: '186.00', bold: true },
+    { kind: 'cut' },
+  ],
+} as const;
+checkReceipt(design);               // warnings, for example letters that print as "?"
+layoutReceipt(design);              // the lines as they print (a preview)
+await printer.printRaw(receiptToBytes(design));
+```
+
+Not tested on a printer. The rupee sign and Tamil print as "?". Details: [docs/RECEIPT.md](docs/RECEIPT.md).
+
 ### TCP
 
 ```ts

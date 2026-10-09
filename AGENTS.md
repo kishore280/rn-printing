@@ -36,11 +36,12 @@ Read this file before you change the code. It tells you where things are, how th
 | `src/zplParse.ts` | `parseZpl`, `validateZpl`, `decodeGfaData`: reads ZPL text into drawable elements and issues. Pure TS. Used for previews. Not checked on a printer. |
 | `src/design.ts` | `LabelDesign` (items in mm), `designToZpl`, `checkDesign`, FSSAI veg symbol. The ZPL always comes from the design, never typed by the user. Not checked on a printer. |
 | `src/probe.ts` | `PROBES` (read-only questions to a connected printer), parsers for the configuration report (`^HH`), `~HM` and key-value replies, `settingsFromConfig`. `LabelPrinter.ask(command)` sends one and returns the text. Nothing in it writes. Not checked on the SNBC printer. |
+| `src/receipt.ts` | Receipts (ESC/POS). `ReceiptDesign` (blocks: text, row, rule, feed, table, qr, barcode, cut), `layoutReceipt` (the lines as they print: the preview), `receiptToBytes` (bytes from the same lines, made by `@point-of-sale/receipt-printer-encoder` 4.0.1), `checkReceipt`. Pure TS. Paper is 16 to 48 columns. `ensureStructuredClone` is the Hermes guard. Send the bytes with `LabelPrinter.printRaw`. Not checked on a printer. See `docs/RECEIPT.md`. |
 | `src/cpcl.ts` | `CpclLabel` builder (BPLC), `cpclSettings`. |
 | `src/bpla.ts` | `BplaLabel` builder. Experimental. Origin is bottom-left. |
 | `src/image.ts` | `ditherRgba`, `ditherGray`, `compressBitmap`. Call native code. Async. |
 | `src/bitmap.ts` | Types: `Bitmap1bpp`, `DitherMethod`, `DitherOptions`. |
-| `src/printer.ts` | `LabelPrinter`: queue (mutex), `print`, `printAll`, status. |
+| `src/printer.ts` | `LabelPrinter`: queue (mutex), `print`, `printRaw` (bytes), `printAll`, status. |
 | `src/reconnect.ts` | cockatiel retry policy, transient-error rule, `ReconnectOptions`, `ConnectionEvent`. Used by `LabelPrinter`. |
 | `src/status.ts` | Parsers for `~HS` and `~HQES` replies. |
 | `src/transport.ts` | `Transport` interface, `LinkState`, `LinkEvent`, `WriteOptions`. The link events and `cancel` are optional on a transport. |
@@ -63,6 +64,7 @@ Read this file before you change the code. It tells you where things are, how th
 | `scripts/check-cpp.sh` | C++ syntax check against Nitro and JSI headers + warning-free core build. |
 | `scripts/check-kotlin.sh` | Downloads kotlinc and Android jars into `.cache/`, compiles the Kotlin code. |
 | `docs/TEARDOWN.md` | What we learned from the two vendor APKs and the SDK. |
+| `docs/RECEIPT.md` | Receipt module: types, layout rules, limits, how to test with an emulator. |
 | `docs/BLE.md` | BLE guide: setup, API, chunking, errors, troubleshooting, manual acceptance test. |
 | `docs/BPLZ-TEST-LABELS.md` | 22 small test labels and 3 status queries to send with nRF Connect, and a result table. Tests check size and syntax only. |
 | `docs/BPLZ-TEST-SHEET.md` | One test label with 12 numbered cells, sent as 9 writes with nRF Connect. The short way to test the BPLZ commands. Tests check size and syntax only. |
@@ -155,6 +157,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | BLE pairing (bonding) | TypeScript: unit-tested with a fake link (`withBond`, 8 tests). Kotlin: compiled (`createBond`, bond receiver). Swift: no pairing API on iOS; `bond()` is a stub. Not run on a device or the printer. |
 | iOS round 3 (write timer, stale responses, connect attempts, piece size, permission wait) | Swift written from Apple's docs: NOT compiled, NOT run. The permission wait is unit-tested in TypeScript. See `docs/BLE-HARDENING.md` section 8. |
 | BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
+| Receipt layout and ESC/POS bytes (`src/receipt.ts`) | TypeScript unit tests only. The bytes are NOT tested on a printer or an emulator. Hermes (`structuredClone` guard) NOT run. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` / `~HI` / `~HM` / `^HH` replies | Real replies of a ready printer are in the tests (`docs/REFERENCES.md`). Replies with a fault were NOT seen. |

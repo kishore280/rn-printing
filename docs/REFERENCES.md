@@ -132,6 +132,17 @@ Copied from the app's "What the printer says" page (firmware V56.17.9Z, `~WN01@v
 - The Bluetooth table has a transparent serial service (`49535343-…`, write and notify) and more services (`0xFF00`, `0xFF10`). No UUID is built into `src/`; the package chooses at run time.
 - Not seen: a reply with a fault (paper out, head open, paused).
 
+## Receipts (ESC/POS), `src/receipt.ts`
+
+Added in 0.3.0. Source and status:
+- Bytes are made by `@point-of-sale/receipt-printer-encoder` 4.0.1 (MIT, Niels Leenheer): https://www.npmjs.com/package/@point-of-sale/receipt-printer-encoder . It uses `@point-of-sale/codepage-encoder` 3.0.2 for code pages (we depend on it directly for the printable check). Both versions are exact in `package.json`. We read the encoder source (`dist/receipt-printer-encoder.mjs`) and its `.d.ts`, and ran it in Node.
+- Command set: the Epson ESC/POS Command Reference (`GS ( k` for the QR code: functions 165 model, 167 cell size, 169 error level, 180 store data, 181 print; `GS k` format 2 with m = 73 for Code 128; `GS V` for the cut). We decoded the golden bytes in `__tests__/receipt.test.ts` against these command names by hand. We did not re-read the reference in the session that wrote this code, and did not write any command bytes ourselves: the encoder writes them.
+- Verified by unit tests only: layout, preview equals print for ASCII text, the golden bytes, the printable check (it agrees with the encoder's own code page choice for U+0080 to U+045F, U+0E00 to U+0E7F and U+2010 to U+20BF), no throw on garbage input, and a run without `structuredClone`.
+- NOT verified: the bytes on any printer or emulator; the line feed after a line that fills the whole paper width (some printers add an empty line); the extra line feed that the encoder adds after the QR code, the barcode and the cut; the code page choice on a real printer (`codepage('auto')` sends `ESC t n` with the number of the "epson" mapping).
+- `structuredClone`: the encoder calls it in the `TextStyle` constructor (each new encoder) and in `CodepageEncoder.getEncoding` (each code page look-up). That is on the normal path of text. Node has it. Hermes may not have it. `ensureStructuredClone()` in `src/receipt.ts` sets a plain-data copy when the global is missing, and never replaces an existing one. Tested by deleting the global in Jest. NOT run on Hermes.
+- The encoder accepts only 32, 35, 42, 44 or 48 columns for ESC/POS. So this module takes 16 to 48 columns, not 80.
+- The rupee sign and Tamil are in no code page of the encoder. They print as "?". A picture path is not built.
+
 ## Compiled, not run
 
 - **C++:** `HybridBplzCodec` and the core compile against the real Nitro and JSI headers (`g++ -std=c++20 -fsyntax-only`).
