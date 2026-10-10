@@ -300,3 +300,15 @@ An independent reader traced each user step of the app through this package. Fou
 4. **Classic: the inbox has a limit** (64 KiB, the newest bytes), as BLE has.
 
 Not fixed here: a Classic write cannot say how many bytes went out (Android's `BluetoothSocket.write` gives no count), so a job is "sent" when the bytes reached the phone's Bluetooth stack. A power-off in that moment is learned at the next check (the reader thread sees the close).
+
+## 15. Round 10: the audit of the app's BLE logic (2026-10-10, 0.4.4)
+
+Found by reading how the app calls the package. Fixed here:
+
+- **A printer that is off took about 31 s on every path.** A status poll and the print gate used the same retry policy (3 tries with back-off).
+  `connect({ attempts })` now lets a caller ask for fewer tries (never more than the policy). The app asks for 1 on polls and checks, and keeps the policy for a print.
+- **A failure to connect was logged as "outcome unknown".** `withLink` now marks an error from `ensureConnected()` with `nothingSent = true`: the job never began, so no byte went out.
+- **iOS has no bond call.** The system shows the pairing dialog when the first write that needs encryption arrives, and answers that write only after the code is typed.
+  The first piece of a write with response now gets `bondTimeoutMs` on top of the write time. Written from Apple's CoreBluetooth docs: NOT run on an iPhone.
+
+Tests: `__tests__/printer.test.ts` (attempts, nothing sent). Not checked on a printer.

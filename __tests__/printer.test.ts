@@ -331,3 +331,35 @@ describe('LabelPrinter: connect, reopen and release (found by the audit of the a
     expect(t.connected).toBe(false);
   });
 });
+
+describe('LabelPrinter: attempts per call and connect failures (audit of the app, BLE)', () => {
+  class Failing extends FakeTransport {
+    tries = 0;
+    async connect(): Promise<void> {
+      this.tries++;
+      throw new TransportError('Connect failed', 'E_CONNECT');
+    }
+  }
+  const quick = { maxAttempts: 3, initialDelayMs: 1, maxDelayMs: 2 };
+
+  it('connect({ attempts: 1 }) tries once; the default policy tries as often as it is set to', async () => {
+    const a = new Failing();
+    await expect(new LabelPrinter(a, { reconnect: quick }).connect({ attempts: 1 })).rejects.toBeInstanceOf(TransportError);
+    expect(a.tries).toBe(1);
+    const b = new Failing();
+    await expect(new LabelPrinter(b, { reconnect: quick }).connect()).rejects.toBeInstanceOf(TransportError);
+    expect(b.tries).toBeGreaterThan(1);
+  });
+
+  it('a caller cannot ask for more tries than the policy', async () => {
+    const t = new Failing();
+    await expect(new LabelPrinter(t, { reconnect: { ...quick, maxAttempts: 1 } }).connect({ attempts: 5 })).rejects.toBeInstanceOf(TransportError);
+    expect(t.tries).toBe(1);
+  });
+
+  it('a print that fails to connect says nothing was sent', async () => {
+    const t = new Failing();
+    const err = await new LabelPrinter(t, { reconnect: false }).print('~JC').catch((e: unknown) => e);
+    expect((err as { nothingSent?: boolean }).nothingSent).toBe(true);
+  });
+});
