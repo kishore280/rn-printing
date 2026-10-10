@@ -27,16 +27,29 @@ Read this file before you change the code. It tells you where things are, how th
    comment and in `docs/REFERENCES.md`.
 7. Keep TypeScript strict. No `any` without a comment that says why.
 
+## Review rules (the kernel's coding style, measured)
+
+`__tests__/linus.test.ts` fails when `src/` breaks one of these. There is no allow-list: split the code, do not raise a limit.
+They come from Linux `Documentation/process/coding-style.rst`.
+
+- A function is at most 60 lines and does ONE thing (chapter 6).
+- A function nests at most 3 levels of `if` / `for` / `while` / `try` / `switch` (chapter 1: "if you need more than 3 levels of indentation, you're screwed anyway"). Use early returns and small named helpers.
+- A file is at most 500 lines and has one reason to change. Split by reason, not by size alone.
+- No `any`, no `@ts-ignore`, no `@ts-nocheck`. A cast has a comment that says why.
+- A comment says WHAT and WHY, never HOW. Do not comment bad code: rewrite it (chapter 8).
+- Do not hide state behind a helper that does nothing (chapter 12: "do not use opaque accessors"). Do not add an option nobody uses.
+- Do not break what a caller sees. A change to the public API of a released tag needs a version bump and a note.
+
 ## Layout
 
 | Path | What is there |
 | --- | --- |
 | `src/index.ts` | Public exports. Add new public API here. |
 | `src/zpl.ts` | `ZplLabel` builder (BPLZ), `zplSettings`, `zplDownloadImage`, `testLabel`. |
-| `src/zplParse.ts` | `parseZpl`, `validateZpl`, `decodeGfaData`: reads ZPL text into drawable elements and issues. Pure TS. Used for previews. Not checked on a printer. |
+| `src/zplParse.ts`, `zplTokens.ts`, `zplTypes.ts` | `parseZpl`, `validateZpl`, `decodeGfaData`: reads ZPL text into drawable elements and issues. Pure TS. Used for previews. Not checked on a printer. `zplTypes` = result types, `zplTokens` = text to commands and the stateless checks, `zplParse` = the printer state and one method for each command. |
 | `src/design.ts` | `LabelDesign` (items in mm), `designToZpl`, `checkDesign`, FSSAI veg symbol. The ZPL always comes from the design, never typed by the user. Not checked on a printer. |
 | `src/probe.ts` | `PROBES` (read-only questions to a connected printer), parsers for the configuration report (`^HH`), `~HM` and key-value replies, `settingsFromConfig`. `LabelPrinter.ask(command)` sends one and returns the text. Nothing in it writes. Not checked on the SNBC printer. |
-| `src/receipt.ts` | Receipts (ESC/POS). `ReceiptDesign` (blocks: text, row, rule, feed, table, qr, barcode, cut), `layoutReceipt` (the lines as they print: the preview), `receiptToBytes` (bytes from the same lines, made by `@point-of-sale/receipt-printer-encoder` 4.0.1), `checkReceipt`. Pure TS. Paper is 16 to 48 columns. `ensureStructuredClone` is the Hermes guard. Send the bytes with `LabelPrinter.printRaw`. Not checked on a printer. See `docs/RECEIPT.md`. |
+| `src/receipt.ts` | Receipts (ESC/POS). `ReceiptDesign` (blocks: text, row, rule, feed, table, qr, barcode, cut), `layoutReceipt` (the lines as they print: the preview), `receiptToBytes` (bytes from the same lines, made by `@point-of-sale/receipt-printer-encoder` 4.0.1), `checkReceipt`. Pure TS. Paper is 16 to 48 columns. `ensureStructuredClone` is the Hermes guard. It is split in `receiptTypes.ts` (types), `receiptText.ts` (code pages, what can print, wrap and align), `receiptLayout.ts` (one function for each block kind) and `receipt.ts` (the public API and the bytes). Send the bytes with `LabelPrinter.printRaw`. Not checked on a printer. See `docs/RECEIPT.md`. |
 | `src/cpcl.ts` | `CpclLabel` builder (BPLC), `cpclSettings`. |
 | `src/bpla.ts` | `BplaLabel` builder. Experimental. Origin is bottom-left. |
 | `src/image.ts` | `ditherRgba`, `ditherGray`, `compressBitmap`. Call native code. Async. |
@@ -44,10 +57,10 @@ Read this file before you change the code. It tells you where things are, how th
 | `src/printer.ts` | `LabelPrinter`: queue (mutex), `print`, `printRaw` (bytes), `printAll`, status. |
 | `src/reconnect.ts` | cockatiel retry policy, transient-error rule, `ReconnectOptions`, `ConnectionEvent`. Used by `LabelPrinter`. |
 | `src/status.ts` | Parsers for `~HS` and `~HQES` replies. |
-| `src/transport.ts` | `Transport` interface, `LinkState`, `LinkEvent`, `WriteOptions`. The link events and `cancel` are optional on a transport. |
+| `src/transport.ts` | `Transport` interface, `LinkState`, `LinkEvent`, `WriteOptions`. The link events, `cancel` and `endJob` are optional on a transport. |
 | `src/linkHealth.ts` | Pure rules: is the link really lost? `up` / `wobbling` / `lost` / `unknown`. Up is never delayed; down waits 4 s or two hard failures. `LabelPrinter.health` runs it. Numbers are NOT measured on the printer. |
 | `src/errorCodes.ts` | The one table of error codes (transient, before any byte, user must fix). `__tests__/errorCodes.test.ts` fails when Kotlin, Swift or TS use a code that is not in it. |
-| `src/transports/` | `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLE` scan/connect + `BluetoothLETransport`, Nitro; `readGatt()` reads every readable characteristic), `sig.ts` (Bluetooth SIG names and decoders for 16-bit UUIDs only), `bleGatt.ts` (pure GATT selection), `chunk.ts` (pure splitting), `tcp.ts`, `inbox.ts`. |
+| `src/transports/` | `tcp.ts` (one job = one connection: `endJob()` closes it; pieces with progress and cancel, a time limit for each piece, `TCP_NODELAY`, link events; tested with a fake socket and with real sockets, not with `react-native-tcp-socket` on a phone), `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLETransport`, Nitro; `readGatt()` reads every readable characteristic; it re-exports the next three files, so the public path is unchanged), `bleScan.ts` (`BluetoothLE` scan/connect, `bleFilters`), `bleTypes.ts` (the public types), `bleCommon.ts` (error mapping and the native object), `sig.ts` (Bluetooth SIG names and decoders for 16-bit UUIDs only), `bleGatt.ts` (pure GATT selection), `chunk.ts` (pure splitting), `tcp.ts`, `inbox.ts`. |
 | `src/native.ts` | Lazy loading of Nitro objects. `setNativeCodec` / `setClassicBluetooth` for tests. |
 | `src/encoding.ts` | base64, UTF-8, Latin-1 helpers. |
 | `src/errors.ts` | Error classes. |
@@ -159,6 +172,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
 | Receipt layout and ESC/POS bytes (`src/receipt.ts`) | TypeScript unit tests only. A real SPRT SP-POS894UED printed receipts over BLE (owner's photos, 2026-10-09). The cut is `GS V 66 0` / `GS V 65 0` (feed to the cutter, then cut; the vendor tool sends the same bytes): the plain cut cut the end of a receipt off. NOT checked on the printer after this change. Hermes (`structuredClone` guard) NOT run. |
 | BLE failed pairing (`PairingWatch`, `E_AUTH` after a close with status 19) | Kotlin: compiled; the rule is tested on a JVM (11 checks). Not run on a device. Swift: not done (iOS pairs by itself). See `docs/BLE-HARDENING.md` section 11. |
+| TCP transport (`TcpTransport`: `endJob()` closes the connection, 16 KiB pieces with progress and cancel, link events) | TypeScript: unit-tested with a fake socket (`__tests__/tcp-job.test.ts`). Not run with `react-native-tcp-socket`, a network printer, PrinterOne or `p910nd`. See `docs/REFERENCES.md`. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` / `~HI` / `~HM` / `^HH` replies | Real replies of a ready printer are in the tests (`docs/REFERENCES.md`). Replies with a fault were NOT seen. |

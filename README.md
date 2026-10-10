@@ -150,12 +150,18 @@ await printer.printRaw(receiptToBytes(design));
 
 Not tested on a printer. The rupee sign and Tamil print as "?". Details: [docs/RECEIPT.md](docs/RECEIPT.md).
 
-### TCP
+### TCP (Ethernet, Wi-Fi, or a print server)
 
 ```ts
 import TcpSocket from 'react-native-tcp-socket';
 const lp = new LabelPrinter(new TcpTransport({ host: '192.168.1.50', createConnection: TcpSocket.createConnection }));
 ```
+
+One job is one connection. `LabelPrinter` calls `endJob()` when a print or a question is done, and `TcpTransport` closes the connection then.
+A print server such as PrinterOne ends a job at the close (or after 30 s of silence), and a printer that allows one connection at a time is free for the next client.
+A write is sent in 16 KiB pieces: progress, `cancel()` and `signal` work between pieces, and `writeTimeoutMs` (15 s) is for one piece.
+Through a print server the printer's answers do not come back, so `getStatus()` is `null`.
+Use the printer's IP address (a `.local` name does not resolve on every phone). Not tested on a printer. See `docs/REFERENCES.md`.
 
 ### Status and settings
 

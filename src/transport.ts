@@ -25,6 +25,9 @@ export interface WriteOptions {
 /** Life cycle of a link: `connecting` > `connected` > `writing` > `connected` ... > `disconnecting` > `disconnected`. */
 export type LinkState = 'connecting' | 'connected' | 'writing' | 'disconnecting' | 'disconnected';
 
+/** The reason of a `disconnected` event when a transport closed the link because the job is done, as it does on purpose after each job (TCP). It is not a loss and not a request of the caller. */
+export const JOB_DONE = 'job done';
+
 /** One change of the link. A lost link, a failed write and a failed connect end in `disconnected`, with the reason. */
 export interface LinkEvent {
   state: LinkState;
@@ -47,4 +50,10 @@ export interface Transport {
   onConnectionState?(listener: (event: LinkEvent) => void): () => void;
   /** Optional. Stop the write that runs now, between two pieces. */
   cancel?(): void;
+  /**
+   * Optional. The job is done: a print after its last byte went out, a question after its reply was read. A transport that uses one connection
+   * for each job (TCP) closes it now; a transport that keeps its link (Bluetooth) leaves this out. `LabelPrinter` calls it and ignores its error:
+   * a job that was sent is never failed, and never sent again, because the close went wrong.
+   */
+  endJob?(): Promise<void>;
 }

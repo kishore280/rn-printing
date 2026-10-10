@@ -12,6 +12,7 @@ import { settle, settleDelay, observe, HEALTH_START, type Evidence, type HealthS
 import { zplSettings } from './zpl';
 import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
 import { TransportError } from './errors';
+import { JOB_DONE } from './transport';
 import type { LinkEvent, LinkState, Transport, WriteOptions } from './transport';
 import type { BleGattReading, BluetoothLETransport } from './transports/bluetoothLE';
 
@@ -82,6 +83,8 @@ export class LabelPrinter {
       transport.onConnectionState?.((e) => {
         if (e.state === 'connected') this.feed({ kind: 'alive' });
         else if (e.state === 'disconnected') {
+          // A close after a finished job says nothing about the link: the health stays as the last job left it.
+          if (e.reason === JOB_DONE) return;
           if (e.reason === 'requested') this.feed({ kind: 'closed' });
           else this.feed({ kind: e.error ? 'failed' : 'down' });
         }
@@ -199,6 +202,11 @@ export class LabelPrinter {
     return run;
   }
 
+  /** Tell the transport that the job is done (a TCP link closes its connection). Never fails the job that was sent. */
+  private async endJob(): Promise<void> {
+    await this.transport.endJob?.().catch(() => undefined);
+  }
+
   /** Open the link now, with retry. Optional: print() and the queries connect by themselves. */
   connect(): Promise<void> {
     return this.exclusive(() => this.open());
@@ -252,7 +260,10 @@ export class LabelPrinter {
     return this.exclusive(() => {
       // Cancelled while it waited in the queue: do not even connect.
       if (options.signal?.aborted) throw new TransportError('The print was cancelled before it started', 'E_CANCELLED');
-      return this.withLink(() => this.transport.write(bytes, options), false);
+      return this.withLink(async () => {
+        await this.transport.write(bytes, options);
+        await this.endJob();
+      }, false);
     });
   }
 
@@ -348,6 +359,7 @@ export class LabelPrinter {
       await this.transport.read({ timeoutMs: 100, idleMs: 50 });
       await this.transport.write(utf8Encode(command));
       const bytes = await this.transport.read({ timeoutMs: options.timeoutMs ?? 1500, idleMs: 150 });
+      await this.endJob();
       return bytes.length === 0 ? null : parse(latin1Decode(bytes));
     }, true));
   }
