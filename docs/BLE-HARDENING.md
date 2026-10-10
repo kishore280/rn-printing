@@ -262,3 +262,20 @@ Each fix has a test in `__tests__/bluetoothLE-review.test.ts` that fails without
 - No settle delay (Nordic uses 200 ms) after a normal close before the next `connectGatt`. A transient status 133 is absorbed by the retry layer.
 - Android 12 and older, one characteristic for write and notify: `c.value` is one mutable field. Theoretical.
 - The 10 ms pacing also applies on iOS, where `canSendWriteWithoutResponse` already paces: throughput only.
+
+## 13. Round 8: Classic Bluetooth and the BLE connect path (2026-10-10)
+
+An independent reviewer read the Classic (SPP) code and the BLE scan, connect and permission code. Not read: BlueZ `profiles/serial`, the kernel `rfcomm/sock.c` and Android's `BluetoothSocket.java` (the fetch gave 404). So the points about `BluetoothSocket.isConnected()` below are from memory and are NOT verified.
+
+**Found and fixed** (0.4.2):
+
+1. **Classic: `dispose()` during a connect left the RFCOMM socket open** (TypeScript, reproduced). The native connect has no cancel and can block for many seconds. `dispose()` found no connection to close, and when the connect finished nobody closed its socket: a printer that takes one connection stayed held. BLE had a generation check; Classic had none. Now `BluetoothClassicTransport` counts connects and disconnects, and a connect that finishes after a `disconnect()` closes its socket and fails with `E_CANCELLED`. Test: `bluetoothClassic.test.ts`, fails without the fix.
+2. **Classic: a permission taken away during the connect was retried.** A `SecurityException` ended as `E_CONNECT`, which is transient. It is now `E_PERMISSION`, so the person sees what to do (Kotlin, compiled only).
+3. **BLE connect: an older link that was still opening was not closed** when a second connect to the same printer came (an inspect while the print link opens). Both opened, and the older one held the printer's single connection with nobody tracking it. Every older link is closed now (Kotlin, compiled only; argued from source).
+4. **BLE connect: an exception in the 200 ms delayed open** ran on the main thread, so it would crash the app and leave the promise open. It rejects the promise now. A pairing receiver also stayed registered when `connectGatt` returned null: it is unregistered (Kotlin, compiled only).
+
+**Open, not fixed:**
+- `BluetoothSocket.isConnected()` is local state only (from memory). After the printer powers off, the first print may fail on a dead socket and is not resent (Classic never says `nothingSent`). Not fixed: a failed first chunk may have partly gone out, so a resend could print twice.
+- A Classic connect has no cancel and no time limit: up to three blocking attempts for each of three retries when the printer is off.
+- `cancelDiscovery()` needs `BLUETOOTH_SCAN` on Android 12 and newer. `BluetoothClassic.requestPermissions` asks for `BLUETOOTH_CONNECT` only. A refusal is swallowed (documented in the code).
+- The Classic state receiver and `requestEnable`'s activity listener are not removed when the object is destroyed (dev reload only).

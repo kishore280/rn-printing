@@ -89,12 +89,23 @@ export class BluetoothClassicTransport implements Transport {
     private readonly options: BluetoothClassicOptions = {}
   ) {}
 
+  /** Counts connects and disconnects: a connect that finishes after a `disconnect()` must close its socket (BLE does the same). */
+  private generation = 0;
+
   async connect(): Promise<void> {
     await this.disconnect();
-    this.connection = await wrap(native().connect(this.address, !!this.options.preferInsecure), 'E_CONNECT');
+    const gen = this.generation;
+    const connection = await wrap(native().connect(this.address, !!this.options.preferInsecure), 'E_CONNECT');
+    if (gen !== this.generation) {
+      // `disconnect()` (or `dispose()`) came while the socket opened. A printer that takes one connection must not stay held.
+      await wrap(connection.close()).catch(() => undefined);
+      throw new TransportError('The connection was closed while it opened', 'E_CANCELLED');
+    }
+    this.connection = connection;
   }
 
   async disconnect(): Promise<void> {
+    this.generation++;
     const c = this.connection;
     this.connection = null;
     if (c) await wrap(c.close());

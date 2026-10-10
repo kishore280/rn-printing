@@ -92,3 +92,43 @@ describe('Bluetooth Classic carries any bytes (BPLZ, binary images)', () => {
     expect(log[1]?.bytes).toEqual(Array.from(zpl));
   });
 });
+
+describe('Bluetooth Classic: a connect that is still opening when the printer is removed', () => {
+  afterEach(() => setClassicBluetooth(undefined));
+
+  it('closes the socket that opens later (found by an independent review: the printer stayed held)', async () => {
+    const { conn } = fakeConnection();
+    let open: (c: ClassicConnection) => void = () => undefined;
+    setClassicBluetooth({
+      connect: () => new Promise<ClassicConnection>((resolve) => { open = resolve; }),
+    } as unknown as ClassicBluetooth);
+    const t = new BluetoothClassicTransport('AA:BB:CC:DD:EE:FF');
+    const connecting = t.connect().then(() => 'connected', (e: { code?: string }) => e.code);
+    await new Promise((r) => setTimeout(r, 5));
+    await t.disconnect(); // what LabelPrinter.dispose() does
+    open(conn);
+    expect(await connecting).toBe('E_CANCELLED');
+    expect(conn.isConnected).toBe(false); // the socket was closed
+    expect(await t.isConnected()).toBe(false);
+  });
+
+  it('a newer connect() also closes the socket of the older one', async () => {
+    const a = fakeConnection();
+    const b = fakeConnection();
+    const opens: Array<(c: ClassicConnection) => void> = [];
+    setClassicBluetooth({
+      connect: () => new Promise<ClassicConnection>((resolve) => { opens.push(resolve); }),
+    } as unknown as ClassicBluetooth);
+    const t = new BluetoothClassicTransport('AA:BB:CC:DD:EE:FF');
+    const first = t.connect().then(() => 'connected', (e: { code?: string }) => e.code);
+    await new Promise((r) => setTimeout(r, 5));
+    const second = t.connect();
+    await new Promise((r) => setTimeout(r, 5));
+    opens[0]?.(a.conn);
+    opens[1]?.(b.conn);
+    await second;
+    expect(await first).toBe('E_CANCELLED');
+    expect(a.conn.isConnected).toBe(false);
+    expect(b.conn.isConnected).toBe(true);
+  });
+});

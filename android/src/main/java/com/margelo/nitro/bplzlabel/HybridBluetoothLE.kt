@@ -185,9 +185,16 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       val older = synchronized(openLinks) { openLinks.remove(deviceId.uppercase())?.get() }
       val link = HybridBleConnection(context, device, onDisconnect)
       synchronized(openLinks) { openLinks[deviceId.uppercase()] = java.lang.ref.WeakReference(link) }
-      if (older != null && older.isConnected) {
+      if (older != null) {
+        // Also an older link that is still opening: it would hold the printer's one connection and nobody would track it.
         older.forceClose()
-        main.postDelayed({ link.open(timeoutMs.toLong(), promise) }, CLOSE_SETTLE_MS)
+        main.postDelayed({
+          try {
+            link.open(timeoutMs.toLong(), promise)
+          } catch (e: Throwable) {
+            promise.reject(e) // this runs on the main thread: an exception here would crash the app and leave the promise open
+          }
+        }, CLOSE_SETTLE_MS)
       } else {
         link.open(timeoutMs.toLong(), promise)
       }

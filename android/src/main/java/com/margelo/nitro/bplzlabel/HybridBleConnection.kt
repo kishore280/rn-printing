@@ -101,6 +101,7 @@ class HybridBleConnection(
       device.connectGatt(context, false, callback)
     }
     if (g == null) {
+      stopWatchingPairing() // closeGatt returns early without a GATT object, so the receiver would stay registered
       settleConnect(BleError("E_CONNECT", "Android could not start the connection to ${device.address}"))
       return
     }

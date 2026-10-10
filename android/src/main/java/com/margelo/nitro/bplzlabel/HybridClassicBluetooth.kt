@@ -81,6 +81,8 @@ class HybridClassicBluetooth : HybridClassicBluetoothSpec() {
           socket?.close()
         } catch (_: Exception) {
         }
+        // The permission was taken away while the app runs: no other try can work, and the person must fix it (E_PERMISSION, not retried).
+        if (e is SecurityException) throw Error("The BLUETOOTH_CONNECT permission is not granted (it was taken away during the connection)")
       }
     }
     throw Error("Cannot connect to ${device.address}: ${lastError?.message}")
