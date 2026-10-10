@@ -150,12 +150,19 @@ await printer.printRaw(receiptToBytes(design));
 
 Not tested on a printer. The rupee sign and Tamil print as "?". Details: [docs/RECEIPT.md](docs/RECEIPT.md).
 
-### TCP
+### TCP (Ethernet, Wi-Fi, or a print server)
 
 ```ts
 import TcpSocket from 'react-native-tcp-socket';
 const lp = new LabelPrinter(new TcpTransport({ host: '192.168.1.50', createConnection: TcpSocket.createConnection }));
 ```
+
+One job is one connection. After the write, `TcpTransport` sends FIN (`endOfJob: 'half-close'`, the default), and the next job opens a new connection.
+Replies such as `~HS` can still be read until the printer closes its side. This is how the CUPS socket backend ends a job.
+It is needed for a print server that waits for the end of the stream (PrinterOne on Windows prints after the close, or after 30 s of silence).
+It also frees a printer that allows only one connection. Use `endOfJob: 'none'` to keep the link open between jobs.
+A write that does not finish in `writeTimeoutMs` (30 s) fails with `E_TIMEOUT`.
+Not tested on a printer. See `docs/REFERENCES.md`.
 
 ### Status and settings
 

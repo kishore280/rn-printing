@@ -177,3 +177,14 @@ Checked: retry behavior with a fake transport and fake timers. NOT checked: on a
 Our own parts: which errors are transient, the error-code mapping from Kotlin messages, the no-resend rule, the default delay values.
 
 | BLE `read` and `readGatt()` | Pattern: nRF Connect and other generic GATT clients (discover, read each characteristic with the read property). Android: `BluetoothGatt.readCharacteristic` with `onCharacteristicRead` (two overloads, Android 13 split). iOS: `CBPeripheral.readValue(for:)` and `didUpdateValueFor`. SIG names and decoders: Bluetooth SIG Assigned Numbers, GATT Specification Supplement (short list in `src/transports/sig.ts`). Unit-tested with a fake link. Kotlin compiled, Swift NOT compiled. NOT run on the printer. |
+
+## TCP link: one job, one connection
+
+Sources read:
+- CUPS socket backend (`backend/socket.c`, OpenPrinting/cups): after all data is sent, `main()` calls `shutdown(device_fd, 1)` (`SHUT_WR`, a half-close) with the comment "Shutdown the socket and wait for the other end to finish...", then `wait_bc(device_fd, 90)` reads back-channel data until the printer closes or 90 s pass.
+- `react-native-tcp-socket` 6.4.3 (`src/Socket.js`): `end()` "half-closes the socket, i.e. it sends a FIN packet. It is possible the server will still send some data"; `destroy()` frees it. `write` calls back with `written` when the native layer has written.
+- PrinterOne (ashtray01/printerone, `internal/receiver/receiver.go`, read only): it ends a job at the close of the connection, or after `ReadTimeoutSeconds` (30) of silence. A client that keeps the socket open waits 30 s for its print. `p910nd` (OpenWrt guide) streams the bytes to the USB device at once.
+
+Decision: `TcpTransport` half-closes after every write (`endOfJob: 'half-close'`, default), reports the link as closed on purpose (`LinkEvent` reason `requested`, so `LabelPrinter.health` does not turn `lost`), keeps the receive side open for replies, and destroys the socket after `closeWaitMs` (5 s) when the printer does not close. A write has a time limit (`writeTimeoutMs`, 30 s; the Transport rule "respect the write timeout"). `endOfJob: 'none'` keeps the old always-open link.
+Checked: unit tests with a fake socket (`__tests__/tcp-job.test.ts`, 16 tests) and `LabelPrinter` over it (two jobs = two connections; `ask` reads the reply after the half-close).
+NOT checked: a real network printer, PrinterOne, or `p910nd`; the native `end()` on Android and iOS; whether a printer treats FIN as the end of the job and still answers `~HS`. The 5 s and 30 s values are our choice.
