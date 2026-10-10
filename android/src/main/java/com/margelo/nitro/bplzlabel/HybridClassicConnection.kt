@@ -19,8 +19,34 @@ class HybridClassicConnection(private val socket: BluetoothSocket) : HybridClass
   @Volatile
   private var closed = false
 
+  /** The printer closed the connection. Android's `BluetoothSocket.isConnected()` is local state: it changes on our own close() only. */
+  @Volatile
+  private var peerClosed = false
+
+  /** What the printer sent and nobody read yet. One thread fills it, the read() poll empties it. */
+  private val inbox = ByteArrayOutputStream()
+
+  init {
+    // A blocking read ends with -1 or an IOException when the printer closes (or when we close). So the state of the link follows from an
+    // event, as it does for TCP, and it is known before the next job. The thread ends with the socket.
+    Thread({ pump() }, "bplz-classic-reader").apply { isDaemon = true }.start()
+  }
+
+  private fun pump() {
+    val piece = ByteArray(CHUNK)
+    try {
+      while (true) {
+        val n = input.read(piece)
+        if (n < 0) break
+        synchronized(inbox) { inbox.write(piece, 0, n) }
+      }
+    } catch (_: java.io.IOException) {
+    }
+    if (!closed) peerClosed = true
+  }
+
   override val isConnected: Boolean
-    get() = !closed && socket.isConnected
+    get() = !closed && !peerClosed && socket.isConnected
 
   override val memorySize: Long
     get() = 4096L
@@ -32,6 +58,8 @@ class HybridClassicConnection(private val socket: BluetoothSocket) : HybridClass
     val delayMs = chunkDelayMs.toLong()
     return Promise.parallel {
       check(!closed) { "The connection is closed" }
+      // Nothing has gone out yet: the caller may send this job again on a new connection (the TypeScript side reads this message).
+      if (peerClosed) throw Error(PEER_CLOSED_MESSAGE)
       synchronized(writeLock) {
         var offset = 0
         while (offset < bytes.size) {
@@ -52,27 +80,32 @@ class HybridClassicConnection(private val socket: BluetoothSocket) : HybridClass
     return Promise.parallel {
       check(!closed) { "The connection is closed" }
       val collected = ByteArrayOutputStream()
-      val piece = ByteArray(CHUNK)
       val start = System.currentTimeMillis()
       var lastData = start
-      // Poll like the SNBC SDK does: every 10 ms, and stop after an idle gap once data has come.
+      // Poll the inbox like the SNBC SDK polls the stream: every 10 ms, and stop after an idle gap once data has come.
       while (System.currentTimeMillis() - start < timeout) {
-        val available = input.available()
-        if (available > 0) {
-          val want = if (limit > 0) minOf(available, piece.size, limit - collected.size()) else minOf(available, piece.size)
-          val n = input.read(piece, 0, want)
-          if (n > 0) {
-            collected.write(piece, 0, n)
-            lastData = System.currentTimeMillis()
-          }
+        val taken = takeFromInbox(if (limit > 0) limit - collected.size() else Int.MAX_VALUE)
+        if (taken.isNotEmpty()) {
+          collected.write(taken, 0, taken.size)
+          lastData = System.currentTimeMillis()
           if (limit > 0 && collected.size() >= limit) break
         } else {
           if (collected.size() > 0 && System.currentTimeMillis() - lastData >= idle) break
+          if (peerClosed) break // nothing more will come
           Thread.sleep(POLL_MS)
         }
       }
       return@parallel ArrayBuffer.copy(collected.toByteArray())
     }
+  }
+
+  /** Up to `max` bytes from the inbox. */
+  private fun takeFromInbox(max: Int): ByteArray = synchronized(inbox) {
+    val all = inbox.toByteArray()
+    val n = minOf(all.size, max)
+    inbox.reset()
+    if (n < all.size) inbox.write(all, n, all.size - n)
+    all.copyOf(n)
   }
 
   override fun close(): Promise<Unit> {
@@ -88,6 +121,8 @@ class HybridClassicConnection(private val socket: BluetoothSocket) : HybridClass
   }
 
   companion object {
+    /** The words TypeScript maps to E_DISCONNECTED with nothing sent (`bluetoothClassic.ts`): change both together. */
+    const val PEER_CLOSED_MESSAGE = "The printer had closed the connection before this write (nothing was sent)"
     private const val CHUNK = 1024
     private const val POLL_MS = 10L
   }

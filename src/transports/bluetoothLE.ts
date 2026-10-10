@@ -22,6 +22,7 @@ import type {
   BluetoothLETransportOptions,
 } from './bleTypes';
 import { chunkBytes } from './chunk';
+import { shortUuid } from './sig';
 import { Inbox } from './inbox';
 
 export * from './bleTypes';
@@ -32,6 +33,10 @@ export { BleDeviceConnection, BluetoothLE, bleFilters } from './bleScan';
 /** The native side has its own time limit; this guard is for a native promise that never settles. */
 const GUARD_MARGIN_MS = 1000;
 const DEFAULT_BOND_TIMEOUT_MS = 30000;
+/** A disconnect within this time after a write without response asks the printer one question first (see `drain`). */
+const DRAIN_WINDOW_MS = 2000;
+const DRAIN_GUARD_MS = 1500;
+const DEVICE_NAME = '2a00';
 const LOWEST_PAYLOAD = 20; // the smallest BLE packet: MTU 23 minus 3
 
 /**
@@ -51,6 +56,7 @@ export class BluetoothLETransport implements Transport {
   private state: BleConnectionState = 'disconnected';
   private picked: BleSelection | null = null;
   private table: BleGattCharacteristic[] = [];
+  private lastUnacknowledgedWriteAt = 0;
   private writeChain: Promise<unknown> = Promise.resolve();
   private generation = 0;
   private lostReason: string | null = null;
@@ -190,6 +196,7 @@ export class BluetoothLETransport implements Transport {
 
   async disconnect(): Promise<void> {
     const link = this.link;
+    await this.drain(link);
     this.generation++; // late callbacks from the old link are ignored
     this.link = null;
     this.picked = null;
@@ -204,6 +211,20 @@ export class BluetoothLETransport implements Transport {
     } finally {
       this.setState('disconnected', 'requested');
     }
+  }
+
+  /**
+   * Before the link is closed after a write without response: the data may still sit in the phone's queue, and a close drops it (Android frees
+   * the queued data of a closed channel; the Linux rule is the same: a close without linger drops the unsent data of the socket). A request that
+   * the printer answers is ordered after the commands before it on the same channel, so its answer says the commands were sent.
+   * The Device Name (0x2A00) is read, because every GATT server has it. The answer is not used, and a failure does not matter.
+   */
+  private async drain(link: BleConnection | null): Promise<void> {
+    if (!link || Date.now() - this.lastUnacknowledgedWriteAt > DRAIN_WINDOW_MS || !link.isConnected) return;
+    const name = this.table.find((c) => c.read && shortUuid(c.uuid) === DEVICE_NAME);
+    if (!name) return;
+    this.lastUnacknowledgedWriteAt = 0;
+    await withGuard(wrap(link.read(name.serviceUuid, name.uuid), 'E_READ'), DRAIN_GUARD_MS, 'Drain timed out').catch(() => undefined);
   }
 
   async isConnected(): Promise<boolean> {
@@ -292,7 +313,7 @@ export class BluetoothLETransport implements Transport {
     this.cancelled = false;
     const gen = this.generation;
     const pieces = chunkBytes(data, this.payloadSize);
-    const delay = this.settings.chunkDelayMs ?? (pick.withResponse ? 0 : 10);
+    const delay = this.settings.chunkDelayMs ?? defaultChunkDelayMs(pick.withResponse);
     const timeoutMs = this.settings.writeTimeoutMs ?? 5000;
     if (pieces.length === 0) return;
 
@@ -339,6 +360,8 @@ export class BluetoothLETransport implements Transport {
       throw error;
     }
     this.lastWriteStats = stats();
+    // A write without response is complete when it is handed to the stack, not when the printer has it: remember it for `disconnect()`.
+    if (!pick.withResponse) this.lastUnacknowledgedWriteAt = Date.now();
     // The link may be lost during the last piece: do not say 'connected' for a link that is gone.
     if (gen === this.generation && this.link === link) this.setState('connected');
   }
@@ -453,4 +476,13 @@ async function withGuard<T>(promise: Promise<T>, ms: number, message: string): P
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * The pause between two pieces. A write with response waits for the answer, so none. On iOS none either: CoreBluetooth says when the next write
+ * without response may go (`canSendWriteWithoutResponse`, `peripheralIsReady`), and the Swift side waits for it. Elsewhere 10 ms: our choice, not
+ * measured on the printer (see AGENTS.md).
+ */
+function defaultChunkDelayMs(withResponse: boolean): number {
+  return withResponse || Platform.OS === 'ios' ? 0 : 10;
 }

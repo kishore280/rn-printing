@@ -17,6 +17,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.ParcelUuid
 import androidx.annotation.Keep
 import com.facebook.proguard.annotations.DoNotStrip
@@ -43,6 +44,9 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
   private var scan: ScanSession? = null
   private var stateReceiver: BroadcastReceiver? = null
   private val openLinks = HashMap<String, java.lang.ref.WeakReference<HybridBleConnection>>()
+
+  /** When each printer's link was closed last (`SystemClock.elapsedRealtime()`). Guarded by `openLinks`. */
+  private val closedAt = HashMap<String, Long>()
 
   override val memorySize: Long
     get() = 4096L
@@ -182,19 +186,25 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       val device = bt.getRemoteDevice(deviceId)
       // One central per printer: many printers allow only one link. A second connection to the same device (for example an inspect while the
       // print link is open) replaces the older one, and waits a moment after the close (Nordic: 200 ms) before it connects again.
-      val older = synchronized(openLinks) { openLinks.remove(deviceId.uppercase())?.get() }
-      val link = HybridBleConnection(context, device, onDisconnect)
-      synchronized(openLinks) { openLinks[deviceId.uppercase()] = java.lang.ref.WeakReference(link) }
-      if (older != null) {
-        // Also an older link that is still opening: it would hold the printer's one connection and nobody would track it.
-        older.forceClose()
+      val key = deviceId.uppercase()
+      val older = synchronized(openLinks) { openLinks.remove(key)?.get() }
+      // Every close of a link, whoever asks for it, notes the time: a new connectGatt right after a close often fails with status 133.
+      val link = HybridBleConnection(context, device) { reason ->
+        synchronized(openLinks) { closedAt[key] = SystemClock.elapsedRealtime() }
+        onDisconnect(reason)
+      }
+      synchronized(openLinks) { openLinks[key] = java.lang.ref.WeakReference(link) }
+      // Also an older link that is still opening: it would hold the printer's one connection and nobody would track it.
+      older?.forceClose()
+      val wait = settleWait(key)
+      if (wait > 0) {
         main.postDelayed({
           try {
             link.open(timeoutMs.toLong(), promise)
           } catch (e: Throwable) {
             promise.reject(e) // this runs on the main thread: an exception here would crash the app and leave the promise open
           }
-        }, CLOSE_SETTLE_MS)
+        }, wait)
       } else {
         link.open(timeoutMs.toLong(), promise)
       }
@@ -202,6 +212,27 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       return Promise.rejected(e)
     }
     return promise
+  }
+
+  /** How long to wait before the next connectGatt to this printer: Nordic waits 200 ms after a close, and a status 133 is the usual price of not waiting. */
+  private fun settleWait(key: String): Long = synchronized(openLinks) {
+    val last = closedAt[key] ?: return 0L
+    (CLOSE_SETTLE_MS - (SystemClock.elapsedRealtime() - last)).coerceAtLeast(0L)
+  }
+
+  override fun dispose() {
+    // The JS object is gone (a reload in development): stop the scan and the state receiver, which would otherwise run on for the life of the process.
+    synchronized(lock) {
+      scan?.finish(null)
+      stateReceiver?.let {
+        try {
+          context.unregisterReceiver(it)
+        } catch (_: IllegalArgumentException) {
+        }
+      }
+      stateReceiver = null
+    }
+    super.dispose()
   }
 
   private fun requireAdapter(): BluetoothAdapter {

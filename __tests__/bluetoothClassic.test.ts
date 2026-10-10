@@ -132,3 +132,50 @@ describe('Bluetooth Classic: a connect that is still opening when the printer is
     expect(b.conn.isConnected).toBe(true);
   });
 });
+
+describe('Bluetooth Classic: a link that the printer closed', () => {
+  afterEach(() => setClassicBluetooth(undefined));
+
+  it('a write on a link that the printer had closed says nothing was sent, so a new link may take the job', async () => {
+    const closed = {
+      isConnected: true,
+      write: async () => { throw new Error('The printer had closed the connection before this write (nothing was sent)'); },
+      close: async () => undefined,
+    } as unknown as ClassicConnection;
+    setClassicBluetooth({ connect: async () => closed } as unknown as ClassicBluetooth);
+    const t = new BluetoothClassicTransport('AA:BB:CC:DD:EE:FF');
+    await t.connect();
+    await expect(t.write(Uint8Array.of(1))).rejects.toMatchObject({ code: 'E_DISCONNECTED', nothingSent: true });
+  });
+
+  it('any other failed write does not claim that nothing was sent: part of it may have gone out', async () => {
+    const broken = {
+      isConnected: true,
+      write: async () => { throw new Error('Broken pipe'); },
+      close: async () => undefined,
+    } as unknown as ClassicConnection;
+    setClassicBluetooth({ connect: async () => broken } as unknown as ClassicBluetooth);
+    const t = new BluetoothClassicTransport('AA:BB:CC:DD:EE:FF');
+    await t.connect();
+    const error = await t.write(Uint8Array.of(1)).catch((e: TransportError) => e);
+    expect(error).toMatchObject({ code: 'E_WRITE' });
+    expect((error as TransportError).nothingSent).not.toBe(true);
+  });
+
+  it('asks for the connect and the scan permission in one dialog, and needs only the connect one', async () => {
+    const asked: string[][] = [];
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- the mock module of react-native
+    const rn = require('react-native') as { PermissionsAndroid: { requestMultiple: (p: string[]) => Promise<Record<string, string>> } };
+    const original = rn.PermissionsAndroid.requestMultiple;
+    rn.PermissionsAndroid.requestMultiple = async (p) => {
+      asked.push(p);
+      return { 'android.permission.BLUETOOTH_CONNECT': 'granted', 'android.permission.BLUETOOTH_SCAN': 'denied' };
+    };
+    try {
+      expect(await BluetoothClassic.requestPermissions()).toBe(true);
+      expect(asked).toEqual([['android.permission.BLUETOOTH_CONNECT', 'android.permission.BLUETOOTH_SCAN']]);
+    } finally {
+      rn.PermissionsAndroid.requestMultiple = original;
+    }
+  });
+});
