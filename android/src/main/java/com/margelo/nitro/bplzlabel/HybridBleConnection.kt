@@ -295,10 +295,8 @@ class HybridBleConnection(
         try {
           if (start()) {
             accepted = true
-            val left = deadline - System.currentTimeMillis()
-            val status = try {
-              op.future.get(maxOf(left, 1L), TimeUnit.MILLISECONDS)
-            } catch (_: TimeoutException) {
+            val status = awaitStatus(op, deadline)
+            if (status == null) {
               // Give up this operation BEFORE anything else runs. Its callback may still come. The guard drops it.
               if (probe) guard.abandonTentative(op) else guard.abandon(op, accepted = true)
               throw BleError("E_TIMEOUT", "$what timed out after $timeoutMs ms")
@@ -314,6 +312,26 @@ class HybridBleConnection(
           throw BleError("E_WRITE", "Android refused to start $what (busy or the link is closing)")
         }
         Thread.sleep(RETRY_MS)
+      }
+    }
+  }
+
+  /**
+   * Wait for the callback of `op` until `deadline`. Returns null on a timeout.
+   * While a pairing runs, the wait goes on (up to PAIRING_EXTRA_MS more): Android holds a write that the device refused for lack of
+   * encryption, starts the pairing and repeats the write itself (BluetoothGatt.onCharacteristicWrite, status 5 or 15), so the app gets
+   * no callback until the person has finished the pairing dialog. Not checked on a device.
+   */
+  private fun awaitStatus(op: GattOpGuard.Op, deadline: Long): Int? {
+    var until = deadline
+    val hardStop = deadline + PAIRING_EXTRA_MS
+    while (true) {
+      try {
+        return op.future.get(maxOf(until - System.currentTimeMillis(), 1L), TimeUnit.MILLISECONDS)
+      } catch (_: TimeoutException) {
+        val now = System.currentTimeMillis()
+        if (device.bondState != BluetoothDevice.BOND_BONDING || now >= hardStop) return null
+        until = minOf(now + BOND_POLL_MS, hardStop)
       }
     }
   }
@@ -504,6 +522,12 @@ class HybridBleConnection(
           BluetoothGatt.GATT_SUCCESS
         }
       }
+      if (!withResponse && status == GATT_CONGESTED) {
+        // Android's stack accepted the data and says its queue is full (att_protocol.cc: "ATT congested, message accepted"). It is not a
+        // failure. The next write without response is dropped while the queue is still full, so wait a little first. Not measured.
+        Thread.sleep(CONGESTED_WAIT_MS)
+        return@parallel
+      }
       if (status != BluetoothGatt.GATT_SUCCESS) {
         val text = BleSupport.gattStatusText(status)
         if (BleSupport.needsPairing(status)) {
@@ -625,6 +649,13 @@ class HybridBleConnection(
     private const val ATT_HEADER = 3
     private const val MAX_ATTRIBUTE = 512
     private const val OP_TIMEOUT_MS = 5000L
+
+    /** GATT_CONGESTED (0x8F): the stack kept a write without response and its queue is full. */
+    private const val GATT_CONGESTED = 143
+    private const val CONGESTED_WAIT_MS = 100L
+
+    /** How long a write may wait for a pairing that the person is finishing, after its own time limit. */
+    private const val PAIRING_EXTRA_MS = 30_000L
     private const val DISCOVERY_TIMEOUT_MS = 15000L
     private const val CLOSE_WAIT_MS = 2000L
     private const val RETRY_MS = 5L

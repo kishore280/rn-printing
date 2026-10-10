@@ -1,11 +1,18 @@
 import type { ReadOptions } from '../transport';
 
-/** Collects bytes that arrive from a notification or socket, and hands them out by polling. */
+/** The most bytes kept for a reader that never comes. A reply of a printer is a few hundred bytes. */
+export const INBOX_LIMIT = 64 * 1024;
+
+/**
+ * Collects bytes that arrive from a notification or socket, and hands them out by polling. A print-only session may never read, so the
+ * inbox keeps the newest `INBOX_LIMIT` bytes and drops the oldest: a chatty printer cannot make the app grow without end.
+ */
 export class Inbox {
   private bytes: number[] = [];
 
   push(chunk: ArrayLike<number>): void {
     for (let i = 0; i < chunk.length; i++) this.bytes.push(chunk[i] ?? 0);
+    if (this.bytes.length > INBOX_LIMIT) this.bytes.splice(0, this.bytes.length - INBOX_LIMIT);
   }
 
   clear(): void {

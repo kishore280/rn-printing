@@ -242,3 +242,23 @@ Not read: CoreBluetooth and the iOS Bluetooth daemon (closed source), the Window
 **Root cause on the printer, and the fix there.** The printer had its own "Enable Bluetooth Password" setting on. With it off, BLE worked. The vendor Setting Tool (V3.58, page `POS8811/POS891/2/3/4/5/6`) sends `1B 09` (enter setup mode), `1B 27 00` (Bluetooth password: No; `01` = Yes) and `1B 15` (leave setup mode and save) in one session. The same bytes alone, without the wrapper, had no effect. The printer does not reply. These bytes are from the owner's agent (Frida hook on `WriteFile`); we did not run them ourselves. They belong to this one printer family: do not send them to another printer.
 
 **Not done.** Swift: iOS has no bond API and pairs by itself; there the close is still reported as a disconnect. Not run on a device: the Kotlin change is compiled and its rule is tested on a JVM only. The exact reason for `SMP_CONFIRM_VALUE_ERR` is not proven (our guess: the phone offers pairing with no passkey and the printer expects one).
+
+## 12. Round 7: the write path read against BlueZ and Android (2026-10-10)
+
+**What was read** (by a reviewer who had not written the code): BlueZ `src/shared/att.c` (one request at a time, the 30 s transaction timeout that shuts the link, a write command has no timer) and `gatt-client.c` (long write, notifications, service changed); AOSP `BluetoothGatt.java` and the stack `gatt_cl.cc`, `att_protocol.cc`, `gatt_utils.cc`, `gatt_int.h` (`GATT_WAIT_FOR_RSP_TIMEOUT_MS` = 30 s), `bta_gattc_act.cc`, `btif_gatt_client.cc`, `l2c_api.cc`, `l2c_utils.cc`. The kernel's `l2cap_core.c` and `hci_conn.c` were NOT read. Linux (BlueZ) is the reference for the rules; the phones run their own stacks, so the Android part is argued from AOSP.
+
+**Found and fixed** (0.4.1):
+
+1. **A pairing inside a write was cut by the write guard** (TypeScript, reproduced). The guard was `writeTimeoutMs + 1 s` around the whole `withBond`, so `bondTimeoutMs` (30 s) could never act: a person who needed 2 s for the pairing dialog got `E_TIMEOUT` and the link closed under the pairing. The guard now covers each native write, and the pairing has its own limit.
+2. **Android, the same case in Kotlin** (argued from `BluetoothGatt.onCharacteristicWrite`, NOT run): Android holds a write that the device refused for lack of encryption (status 5 or 15), starts the pairing and repeats the write itself; the app gets no callback until the pairing ends, and our 5 s limit ended the job and the pairing with it. `awaitStatus` goes on waiting while `bondState` is BONDING, up to 30 s more.
+3. **Android, status 143 (GATT_CONGESTED) on a write without response** (argued from `att_protocol.cc` "ATT congested, message accepted" and `gatt_cl.cc`; NOT run): the stack kept the data and says its queue is full. We treated it as a failed write and closed the link in the middle of a label. It is now accepted, and the next piece waits 100 ms (our choice, not measured). A later status 129 still fails the write.
+4. **The state went back to `connected` after the link was lost during the last piece** (reproduced). `LabelPrinter` then fed `alive` to the link health. Fixed: only a link that is still the current one gets `connected`.
+5. **The inbox had no limit** (reproduced: 20,000 notifications = 4.9 million entries). It keeps the newest 64 KiB now.
+
+Each fix has a test in `__tests__/bluetoothLE-review.test.ts` that fails without it (the Kotlin fixes are compiled only: `bash scripts/check-kotlin.sh`).
+
+**Open, not fixed** (not verified, or no safe fix without a printer):
+- The tail of a job after a write without response can be lost if the app disconnects at once: a write command is complete when it is handed to L2CAP, and Android frees the queued data on disconnect (`l2cu_release_ccb`). Today the CCCD write of `unsubscribe` queues behind the data and acts as a barrier, but only when a notify characteristic is subscribed. On iOS `setNotifyValue(false)` is not awaited. A real fix needs a known flush signal; there is none in the public API.
+- No settle delay (Nordic uses 200 ms) after a normal close before the next `connectGatt`. A transient status 133 is absorbed by the retry layer.
+- Android 12 and older, one characteristic for write and notify: `c.value` is one mutable field. Theoretical.
+- The 10 ms pacing also applies on iOS, where `canSendWriteWithoutResponse` already paces: throughput only.
