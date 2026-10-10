@@ -116,6 +116,8 @@ class FakeLink {
 interface FakeNativeOptions extends FakeLinkOptions {
   state?: string;
   connectError?: Error;
+  /** Ids the phone does not know: connect fails with E_DEVICE_NOT_FOUND, as iOS does. */
+  unknownIds?: string[];
   enableAnswer?: boolean;
   enableError?: Error;
   /** Called for each scan. Emit results through `emit`, then resolve to end the scan. */
@@ -140,6 +142,7 @@ function fakeNative(opts: FakeNativeOptions = {}) {
     stopScan: async () => { stopCalls++; stopScanResolver?.(); },
     connect: async (id: string, timeoutMs: number, onDisconnect: (reason: string) => void) => {
       connectCalls.push({ id, timeoutMs });
+      if (opts.unknownIds?.includes(id)) throw new Error('[E_DEVICE_NOT_FOUND] The id is not known to this phone. Scan first.');
       if (opts.connectError) throw opts.connectError;
       const link = new FakeLink(opts, (reason) => { link.connected = false; onDisconnect(reason); });
       links.push(link);
@@ -733,6 +736,57 @@ describe('BluetoothLETransport: write', () => {
   });
 });
 
+describe('BluetoothLETransport: rediscover (iOS id changed)', () => {
+  const emitAll = (...rows: BleScanResult[]) => async (_o: BleScanOptions, emit: (r: BleScanResult) => void) => rows.forEach(emit);
+  const saved = { id: 'old', name: 'Printer-1', serviceUuids: ['svc'] };
+
+  it('does not scan by default: an unknown id is E_DEVICE_NOT_FOUND', async () => {
+    const fake = fakeNative({ unknownIds: ['old'], scanImpl: emitAll(scanResult('new', 'Printer-1')) });
+    const t = new BluetoothLETransport(saved);
+    await expect(t.connect()).rejects.toMatchObject({ code: 'E_DEVICE_NOT_FOUND', nothingSent: true });
+    expect(fake.connectCalls.map((c) => c.id)).toEqual(['old']);
+  });
+
+  it('scans with the saved services, connects to the one device with the saved name and keeps its id', async () => {
+    let filter: string[] = [];
+    const fake = fakeNative({
+      unknownIds: ['old'],
+      scanImpl: async (o, emit) => {
+        filter = o.serviceUuids;
+        emit(scanResult('other', 'Printer-2'));
+        emit(scanResult('new', 'Printer-1'));
+      },
+    });
+    const t = new BluetoothLETransport(saved, { rediscover: true });
+    await t.connect();
+    expect(filter).toEqual(['svc']);
+    expect(fake.connectCalls.map((c) => c.id)).toEqual(['old', 'new']);
+    expect(t.id).toBe('new');
+  });
+
+  it('does not scan when the phone knows the id', async () => {
+    const fake = fakeNative({ scanImpl: emitAll(scanResult('new', 'Printer-1')) });
+    const t = new BluetoothLETransport(saved, { rediscover: true });
+    await t.connect();
+    expect(fake.connectCalls.map((c) => c.id)).toEqual(['old']);
+    expect(t.id).toBe('old');
+  });
+
+  it('refuses two devices with the saved name (a label must not print on the wrong printer)', async () => {
+    const fake = fakeNative({ unknownIds: ['old'], scanImpl: emitAll(scanResult('a', 'Printer-1'), scanResult('b', 'Printer-1')) });
+    await expect(new BluetoothLETransport(saved, { rediscover: true }).connect()).rejects.toMatchObject({ code: 'E_DEVICE_NOT_FOUND' });
+    expect(fake.connectCalls.map((c) => c.id)).toEqual(['old']);
+  });
+
+  it('fails with E_DEVICE_NOT_FOUND when nothing fits, and does nothing for an id string or a device with no name and no services', async () => {
+    const fake = fakeNative({ unknownIds: ['old'], scanImpl: emitAll(scanResult('x', 'Printer-9')) });
+    await expect(new BluetoothLETransport(saved, { rediscover: true }).connect()).rejects.toMatchObject({ code: 'E_DEVICE_NOT_FOUND' });
+    await expect(new BluetoothLETransport('old', { rediscover: true }).connect()).rejects.toMatchObject({ code: 'E_DEVICE_NOT_FOUND' });
+    await expect(new BluetoothLETransport({ id: 'old', name: null, serviceUuids: [] }, { rediscover: true }).connect()).rejects.toMatchObject({ code: 'E_DEVICE_NOT_FOUND' });
+    expect(fake.connectCalls.map((c) => c.id)).toEqual(['old', 'old', 'old']);
+  });
+});
+
 describe('BluetoothLETransport: link loss and reconnect', () => {
   it('reports an unexpected disconnect and fails the write in progress', async () => {
     const fake = fakeNative({ mtu: 23 });
@@ -1053,6 +1107,16 @@ describe('BluetoothLETransport: life cycle of a write', () => {
       code: 'E_DISCONNECTED',
     });
     expect(events.filter((e) => e.state === 'disconnected')).toEqual([{ state: 'disconnected', reason: 'the device closed the link', code: undefined }]);
+  });
+
+  it('a link lost in the middle of a write is "outcome unknown": some bytes went out, so it is not nothingSent', async () => {
+    const fake = fakeNative({ mtu: 23 });
+    const t = new BluetoothLETransport('dev-1');
+    await t.connect();
+    const link = fake.links[0] as FakeLink;
+    const error = await t.write(bytes(200), { onProgress: (s) => { if (s === 40) link.lost('the app was suspended'); } }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'E_DISCONNECTED', nothingSent: false });
+    expect((error as { bytesSent: number }).bytesSent).toBeGreaterThan(0);
   });
 
   it('a failed connect ends in disconnected with the error', async () => {

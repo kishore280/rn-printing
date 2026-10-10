@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import NitroModules
+import UIKit
 
 /// An error with a code. TypeScript reads the code in square brackets at the start of the
 /// message (see `classify()` in src/transports/bluetoothLE.ts). Nitro passes only the message.
@@ -104,10 +105,24 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
   private var scanAllowDuplicates = false
   private var scanToken = 0
 
+  // background: how many times the app went to the background, and the count when each link opened (queue only)
+  private var backgroundEntries = 0
+  private var linkStartEntries: [UUID: Int] = [:]
+
   // peripherals
   private var known: [UUID: CBPeripheral] = [:]
   private var connecting: [UUID: (conn: HybridBleConnection, settle: Settle<(any HybridBleConnectionSpec)>)] = [:]
   private var connections: [UUID: HybridBleConnection] = [:]
+
+  override init() {
+    super.init()
+    // Apple (Core Bluetooth Background Processing): an app without the bluetooth-central background mode is suspended soon after it leaves
+    // the foreground, and a link that drops then is reported only when the app runs again. Count the moves to the background, so the
+    // reason of a lost link can say it. The package does not hold the app awake: that is the host app's job (docs/BLE.md).
+    NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
+      self?.queue.async { self?.backgroundEntries += 1 }
+    }
+  }
 
   /// Created on first use, so the permission dialog (and, with Bluetooth off, iOS's own "Turn on Bluetooth" alert) appears when the app first uses BLE, not at start-up.
   var manager: CBCentralManager {
@@ -195,6 +210,7 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
     guard let entry = connecting.removeValue(forKey: peripheral.identifier) else { return }
     connections[peripheral.identifier] = entry.conn
+    linkStartEntries[peripheral.identifier] = backgroundEntries
     entry.conn.markConnected()
     entry.settle.resolve(entry.conn)
   }
@@ -209,7 +225,11 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
     // A late event of the link before. A new connect is already running (or done) on the same CBPeripheral, and this
     // event must not end it. Apple: the peripheral's state tells which link is current.
     if peripheral.state == .connecting || peripheral.state == .connected { return }
-    let reason = error?.localizedDescription ?? "the device closed the link"
+    var reason = error?.localizedDescription ?? "the device closed the link"
+    // The link was open when the app left the foreground. Without the bluetooth-central background mode iOS may have dropped it then.
+    if linkStartEntries.removeValue(forKey: peripheral.identifier).map({ $0 != backgroundEntries }) == true {
+      reason += " (the app was in the background while the link was open; declare bluetooth-central in UIBackgroundModes)"
+    }
     if let entry = connecting.removeValue(forKey: peripheral.identifier) {
       entry.settle.reject(bleError("E_CONNECT", "Cannot connect to \(peripheral.identifier.uuidString): \(reason)"))
     }
@@ -285,7 +305,9 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
       self.finishScan(error: nil) // no scan while connecting
       let peripheral = self.known[uuid] ?? self.manager.retrievePeripherals(withIdentifiers: [uuid]).first
       guard let target = peripheral else {
-        settle.reject(bleError("E_DEVICE_NOT_FOUND", "The id \(deviceId) is not known to this phone. Scan first."))
+        // Apple: retrievePeripherals(withIdentifiers:) returns only peripherals the system still knows, and the id is private to this phone.
+        // The caller scans again (the transport can do it: option `rediscover`).
+        settle.reject(bleError("E_DEVICE_NOT_FOUND", "The id \(deviceId) is not known to this phone (iOS makes ids for each phone, and can forget them). Scan again."))
         return
       }
       self.known[uuid] = target

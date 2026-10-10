@@ -99,6 +99,13 @@ export interface BluetoothLETransportOptions extends BleSelectionOptions {
    * Not checked on a printer: the TVS may not need pairing at all.
    */
   bond?: 'auto' | 'never' | undefined;
+  /**
+   * iOS only in practice. When the phone does not know the device id (`E_DEVICE_NOT_FOUND`), scan once for the name or the services of the
+   * device object given to the constructor and connect to the one device that fits (`id` then gives the new id). Default false: two printers
+   * with one name in range would make a label print on the wrong one, so only turn it on when one printer is in the place. Does nothing when
+   * the constructor got an id string, or a device with no name and no services. Not checked on an iPhone.
+   */
+  rediscover?: boolean | undefined;
   /** How long to wait for the person to accept the pairing, in ms. Default 30000. */
   bondTimeoutMs?: number | undefined;
 }
