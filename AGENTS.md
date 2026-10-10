@@ -75,6 +75,7 @@ They come from Linux `Documentation/process/coding-style.rst`.
 | `test/reference/`, `test/mocks/` | Oracles and mocks for tests. |
 | `test-native/` | C++ CLI and bench used by the parity test. |
 | `scripts/check-cpp.sh` | C++ syntax check against Nitro and JSI headers + warning-free core build. |
+| `scripts/check-ios.sh` | macOS only. Builds the pod in a temp React Native host app (`pod install`, `xcodebuild`). CI job `ios`. |
 | `scripts/check-kotlin.sh` | Downloads kotlinc and Android jars into `.cache/`, compiles the Kotlin code. |
 | `docs/TEARDOWN.md` | What we learned from the two vendor APKs and the SDK. |
 | `docs/RECEIPT.md` | Receipt module: types, layout rules, limits, how to test with an emulator. |
@@ -165,18 +166,19 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | Kotlin | Compiled with kotlinc against Android API jar. Not run on a device. |
 | Native BLE (TypeScript) | Unit-tested with a fake native layer. |
 | Native BLE (Kotlin) | Compiled with kotlinc against the Android API jar. Not run on a device. |
-| Native BLE (Swift / CoreBluetooth) | NOT compiled, NOT run. No Swift toolchain here. |
-| BLE `read` (GATT inspector) | TypeScript: unit-tested with a fake. Kotlin: compiled only. Swift: NOT compiled. Not run on a device. |
+| Native BLE (Swift / CoreBluetooth) | Compiled in CI (job `ios`, Xcode 26.6, iOS Simulator, host app with React Native 0.87.1; `scripts/check-ios.sh`). NOT run on a device or a simulator. |
+| BLE `read` (GATT inspector) | TypeScript: unit-tested with a fake. Kotlin: compiled only. Swift: compiled in CI. Not run on a device. |
 | BLE pairing (bonding) | TypeScript: unit-tested with a fake link (`withBond`, 8 tests). Kotlin: compiled (`createBond`, bond receiver). Swift: no pairing API on iOS; `bond()` is a stub. Not run on a device or the printer. |
-| iOS round 3 (write timer, stale responses, connect attempts, piece size, permission wait) | Swift written from Apple's docs: NOT compiled, NOT run. The permission wait is unit-tested in TypeScript. See `docs/BLE-HARDENING.md` section 8. |
-| iOS round 11 (app in the background: the lost-link reason; `rediscover` for a changed iOS device id) | Swift (`BleCentral`: background count, a clearer not-found message): written from Apple's docs, NOT compiled, NOT run. TypeScript (`bleRediscover.ts`, a cut write is `E_DISCONNECTED` with `nothingSent` false and is never sent again): unit-tested. Apple's `retrievePeripherals` reference page was not read. See `docs/BLE-HARDENING.md` section 16. |
+| iOS round 3 (write timer, stale responses, connect attempts, piece size, permission wait) | Swift written from Apple's docs: compiled in CI, NOT run. The permission wait is unit-tested in TypeScript. See `docs/BLE-HARDENING.md` section 8. |
+| iOS round 11 (app in the background: the lost-link reason; `rediscover` for a changed iOS device id) | Swift (`BleCentral`: background count, a clearer not-found message): written from Apple's docs, compiled in CI, NOT run. TypeScript (`bleRediscover.ts`, a cut write is `E_DISCONNECTED` with `nothingSent` false and is never sent again): unit-tested. Apple's `retrievePeripherals` reference page was not read. See `docs/BLE-HARDENING.md` section 16. |
 | BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
 | Receipt layout and ESC/POS bytes (`src/receipt.ts`) | TypeScript unit tests only. A real SPRT SP-POS894UED printed receipts over BLE (owner's photos, 2026-10-09). The cut is `GS V 66 0` / `GS V 65 0` (feed to the cutter, then cut; the vendor tool sends the same bytes): the plain cut cut the end of a receipt off. NOT checked on the printer after this change. Hermes (`structuredClone` guard) NOT run. |
 | BLE failed pairing (`PairingWatch`, `E_AUTH` after a close with status 19) | Kotlin: compiled; the rule is tested on a JVM (11 checks). Not run on a device. Swift: not done (iOS pairs by itself). See `docs/BLE-HARDENING.md` section 11. |
 | TCP transport (`TcpTransport`: `endJob()` closes the connection, 16 KiB pieces with progress and cancel, link events) | TypeScript: unit-tested with a fake socket (`__tests__/tcp-job.test.ts`). Not run with `react-native-tcp-socket`, a network printer, PrinterOne or `p910nd`. See `docs/REFERENCES.md`. |
 | BLE write path vs BlueZ / Android (round 7: pairing inside a write, GATT_CONGESTED, state after link loss, inbox limit) | TypeScript: tests that fail without the fix (`__tests__/bluetoothLE-review.test.ts`). Kotlin: compiled; the two Kotlin fixes are argued from AOSP source, NOT run on a device. See `docs/BLE-HARDENING.md` section 12. |
 | Classic Bluetooth and BLE connect path (round 8: a connect that finishes after dispose, SecurityException, older link still opening, the Classic reader thread and connect budget, the BLE settle delay, the disconnect drain, iOS pacing) | TypeScript: tests that fail without the fix (`__tests__/bluetoothClassic.test.ts`). Kotlin: compiled; argued from source, NOT run on a device. `BluetoothSocket.java` and the kernel `rfcomm/sock.c` were read (not `bt_sock_wait_ready`, `rfcomm_dlc_send`). See `docs/BLE-HARDENING.md` section 13. |
-| Gradle, CMake, Xcode builds | NOT run. |
+| Gradle, CMake builds | NOT run. |
+| Xcode build of the pod | Runs in CI (job `ios`): `pod install` and `xcodebuild` for the Simulator in a throw-away host app. No signing, no device. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` / `~HI` / `~HM` / `^HH` replies | Real replies of a ready printer are in the tests (`docs/REFERENCES.md`). Replies with a fault were NOT seen. |
 | Hermes / phone speed | NOT measured. |
@@ -184,7 +186,6 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 ## Open items
 
 - Run the BLE manual acceptance test in `docs/BLE.md` on Android and iOS with the real printer.
-- Compile the Swift files on a Mac (`pod install` and an Xcode build).
 - Confirm the label size in mm of the owner's media (the self-test says 561 dots long = about 70 mm).
 - Test on a real device and printer: Bluetooth Classic, BLE, TCP.
 - Confirm BPLA units and framing.

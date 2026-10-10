@@ -51,7 +51,7 @@ Sources for the platform calls (official docs; the pages were not fetched again 
 Status:
 - TypeScript logic (scan mapping, GATT selection, MTU and piece size, chunking, flow control, timeouts, cancel, link loss, reconnect through `LabelPrinter`, error codes) is unit-tested with a fake native layer: `__tests__/bluetoothLE.test.ts`.
 - Kotlin (`HybridBluetoothLE`, `HybridBleConnection`) compiles with `kotlinc` against the Android 14 API (`scripts/check-kotlin.sh`). Not run on a device.
-- Swift (`ios/*.swift`) was written against the generated Nitro Swift specs. It is NOT compiled: there is no Swift toolchain in this environment or in CI.
+- Swift (`ios/*.swift`) was written against the generated Nitro Swift specs. It COMPILES in CI (job `ios`, `scripts/check-ios.sh`, Xcode 26.6, 2026-10-10, run 38049348478): a throw-away React Native 0.87.1 host app, `pod install`, `xcodebuild` for the iOS Simulator (arm64 and x86_64). The first compile found one error (`CBAdvertisementDataIsConnectableKey` is `CBAdvertisementDataIsConnectable`) and `pod install` found missing `authors` and `homepage` in the podspec; both are fixed. NOT run on a device or a simulator.
 - The selection rule (score +4 / +2 / +1) and the defaults (MTU request 247, 10 ms delay for writes without response, 5 s write timeout, 10 s connect timeout, 15 s discovery timeout) are our choices. They are not from a source and not tuned on a printer.
 - A user reported (manual test with nRF Connect and a hand-written BPLZ payload, not run by this package) that one TVS LP 46 Dlite prints over BLE. That is the only hardware evidence.
 - Android: the code expects `onCharacteristicWrite` for "write without response" (reported by the sources above) and has a probe in case a phone does not. Not checked on a device.
@@ -154,11 +154,11 @@ Added in 0.3.0. Source and status:
 ## Not checked
 
 - Anything on a real device or a real SNBC printer.
-- The Android and iOS native builds (Gradle, CMake, Xcode). The build files come from the official scaffold.
+- The Android native build (Gradle, CMake). The iOS pod compiles in the CI host app (see above); no app was run.
 - The BPLA row and column units, and the `Q`, `E`, `<STX>L` framing.
 - The meaning of the `~HS` and `~HQES` fields when the printer has a fault. Only the "ready" replies were seen (see "Real replies").
 - BLE on a real phone and printer (Android and iOS), with this package's own code. See the manual test in [BLE.md](BLE.md).
-- The Swift code: it was never compiled.
+- The Swift code: it compiles in CI, but it never ran.
 - Speed on Hermes or on a phone CPU. `npm run bench` measures Node (V8) only.
 
 ## Reconnect design
@@ -176,7 +176,7 @@ The ble-plx fork ConnectionManager was read and tried, then removed: it only wor
 Checked: retry behavior with a fake transport and fake timers. NOT checked: on a real printer or on Hermes (cockatiel uses setTimeout and AbortSignal; both exist in React Native, not run here).
 Our own parts: which errors are transient, the error-code mapping from Kotlin messages, the no-resend rule, the default delay values.
 
-| BLE `read` and `readGatt()` | Pattern: nRF Connect and other generic GATT clients (discover, read each characteristic with the read property). Android: `BluetoothGatt.readCharacteristic` with `onCharacteristicRead` (two overloads, Android 13 split). iOS: `CBPeripheral.readValue(for:)` and `didUpdateValueFor`. SIG names and decoders: Bluetooth SIG Assigned Numbers, GATT Specification Supplement (short list in `src/transports/sig.ts`). Unit-tested with a fake link. Kotlin compiled, Swift NOT compiled. NOT run on the printer. |
+| BLE `read` and `readGatt()` | Pattern: nRF Connect and other generic GATT clients (discover, read each characteristic with the read property). Android: `BluetoothGatt.readCharacteristic` with `onCharacteristicRead` (two overloads, Android 13 split). iOS: `CBPeripheral.readValue(for:)` and `didUpdateValueFor`. SIG names and decoders: Bluetooth SIG Assigned Numbers, GATT Specification Supplement (short list in `src/transports/sig.ts`). Unit-tested with a fake link. Kotlin compiled, Swift compiled in CI. NOT run on the printer. |
 
 ## TCP link: one job, one connection
 
@@ -207,3 +207,9 @@ Known limits (not fixed here):
 
 Checked: unit tests with a fake socket (`__tests__/tcp-job.test.ts`) and 7 tests on REAL TCP sockets (`__tests__/tcp-real-socket.test.ts`: Node's `net` has the same `write` / `on` / `end` / `destroy` / `setNoDelay` as `react-native-tcp-socket`, so it fits `TcpSocketLike`; a 300 KB job arrives whole and in order, a reply is read before the close, a printer that stops reading gives `E_TIMEOUT` with the bytes sent, a closed port gives `E_CONNECT`, a peer that closes mid-job is an error, `cancel()` stops between pieces) and `LabelPrinter` over it (two jobs = two connections; `ask` reads the reply and only then closes; a failing close does not fail a sent print).
 NOT checked: a real network printer, PrinterOne, `p910nd`, the native `end()` on a device, the Hermes runtime. The 5 s, 15 s and 16 KiB values are our choice.
+
+## iOS compile check (CI)
+
+- Job `ios` in `.github/workflows/ci.yml` runs `scripts/check-ios.sh` on `macos-latest`. It runs `npx nitrogen` and fails if `nitrogen/` changes. Then it makes a React Native host app with `@react-native-community/cli init` (same React Native version as the devDependency), links this package and `react-native-nitro-modules`, runs `pod install` and `xcodebuild` (Debug, iOS Simulator, no signing).
+- Why a host app: the pod needs React-Core, Nitro and the C++/Swift interop build settings that only a CocoaPods build sets. This is the pattern of the Nitro example app (`react-native-nitro-modules` repo, `example/`, built with `xcodebuild` in its CI). Sources: Nitro Modules docs (nitro.margelo.com), the CocoaPods podspec rules (`pod install` validates `authors` and `homepage`), Apple CoreBluetooth reference for the advertisement keys.
+- What it proves: the Swift files, the generated Swift/C++ bridge and the C++ codec compile and link against the Simulator SDK. What it does not prove: any run, CoreBluetooth behaviour, a device build with signing, the iOS minimum version of a user app.

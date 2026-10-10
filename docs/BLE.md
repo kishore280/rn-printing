@@ -249,4 +249,4 @@ Run it on one Android phone and one iPhone. Write down the result.
 ## What was and was not checked
 
 See [REFERENCES.md](REFERENCES.md). In short: the TypeScript logic is unit-tested with a fake native layer. The Kotlin code compiles against the Android 14 API.
-The Swift code is NOT compiled (no Swift toolchain in CI). Nothing ran on a device.
+The Swift code compiles in CI (job `ios`, Simulator SDK). Nothing ran on a device.

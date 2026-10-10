@@ -175,7 +175,7 @@ What we do (`bond: 'auto'` is the default; `bond: 'never'` turns it off):
 
 Not verified: the TVS LP 46 Dlite may not need pairing at all. A user wrote to it with nRF Connect and it printed. The flow is unit-tested with a fake link (8 tests) and the Kotlin code is compiled. It has not run on a device.
 
-### iOS code written from Apple's documentation (NOT compiled, NOT run)
+### iOS code written from Apple's documentation (compiled in CI, NOT run)
 
 No Swift toolchain exists here. Each item follows the Apple documentation named, and each is open for a Mac build.
 
@@ -321,7 +321,7 @@ Tests: `__tests__/printer.test.ts` (attempts, nothing sent). Not checked on a pr
 
 - The package cannot hold an app awake (that is `UIApplication.beginBackgroundTask`, the host app's job). It gives the app `printer.busy` (0.4.3) and documents the steps (`docs/BLE.md`, "iOS: the app in the background").
 - A write cut by a link loss is already "outcome unknown": `nothingSent` is false once a native write began, `bytesSent` says how many bytes were accepted, and `withLink` does not send a job again unless `resendAfterPartialWrite`. No new error code: `E_DISCONNECTED` is the right one. Tests now name this rule (`printer.test.ts`, `bluetoothLE.test.ts`).
-- Swift (`BleCentral`): counts `didEnterBackground`, and when a link ends and the app was in the background while it was open, the reason says so and names `bluetooth-central`. Written from Apple's docs. NOT compiled, NOT run.
+- Swift (`BleCentral`): counts `didEnterBackground`, and when a link ends and the app was in the background while it was open, the reason says so and names `bluetooth-central`. Written from Apple's docs. compiled in CI, NOT run.
 - Not done: `CBConnectPeripheralOptionNotifyOnDisconnectionKey` (a system alert the host app did not ask for), state restoration (a restored link would need a place to hand the connection to; a job opens its own link), and `bluetooth-central` in the package (a package cannot change the host Info.plist, and the mode is a store review question for the app).
 - Device id: `BluetoothLETransport` option `rediscover`. On `E_DEVICE_NOT_FOUND` it scans once for the saved services and keeps the devices with the saved name. It connects only when exactly one fits (`bleRediscover.ts`), and `transport.id` gives the new id. Default off, because two printers with one name in range could print a label on the wrong one. The logic is in TypeScript (no spec change, so no `nitrogen` change) and is unit-tested with a fake. The Swift `open()` only says more in its message. `retrieveConnectedPeripherals(withServices:)` is NOT used: a service list is not passed to the native `connect`, and a spec change was too large for this round. So a printer that another app holds connected does not advertise, and the fallback cannot find it.
 
