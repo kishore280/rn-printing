@@ -237,21 +237,10 @@ export class BluetoothLETransport implements Transport {
     if (!link || this.state !== 'connected') throw new TransportError('The printer is not connected', 'E_NOT_CONNECTED');
     const out: BleGattReading[] = [];
     for (const c of this.table) {
-      const row: BleGattReading = { ...c };
-      if (c.read) {
-        try {
-          row.value = new Uint8Array(await link.read(c.serviceUuid, c.uuid));
-        } catch (e) {
-          const error = classify(e, 'E_READ');
-          row.error = { code: error.code ?? 'E_READ', message: error.message };
-          // The link is gone: the rest cannot be read either.
-          if (error.code === 'E_DISCONNECTED') {
-            out.push(row);
-            throw error;
-          }
-        }
-      }
+      const row = await readCharacteristic(link, c);
       out.push(row);
+      // The link is gone: the rest cannot be read either.
+      if (row.error?.code === 'E_DISCONNECTED') throw new TransportError(row.error.message, 'E_DISCONNECTED');
     }
     return out;
   }
@@ -441,3 +430,16 @@ export class BluetoothLETransport implements Transport {
 }
 
 export type { BleSelection, BleSelectionOptions, BleSelector, BleWriteMode, BleGattCharacteristic };
+
+/** One characteristic as the inspector shows it: its value, or why it could not be read. */
+async function readCharacteristic(link: BleConnection, c: BleGattCharacteristic): Promise<BleGattReading> {
+  const row: BleGattReading = { ...c };
+  if (!c.read) return row;
+  try {
+    row.value = new Uint8Array(await link.read(c.serviceUuid, c.uuid));
+  } catch (e) {
+    const error = classify(e, 'E_READ');
+    row.error = { code: error.code ?? 'E_READ', message: error.message };
+  }
+  return row;
+}

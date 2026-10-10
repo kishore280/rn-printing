@@ -27,16 +27,29 @@ Read this file before you change the code. It tells you where things are, how th
    comment and in `docs/REFERENCES.md`.
 7. Keep TypeScript strict. No `any` without a comment that says why.
 
+## Review rules (the kernel's coding style, measured)
+
+`__tests__/linus.test.ts` fails when `src/` breaks one of these. There is no allow-list: split the code, do not raise a limit.
+They come from Linux `Documentation/process/coding-style.rst`.
+
+- A function is at most 60 lines and does ONE thing (chapter 6).
+- A function nests at most 3 levels of `if` / `for` / `while` / `try` / `switch` (chapter 1: "if you need more than 3 levels of indentation, you're screwed anyway"). Use early returns and small named helpers.
+- A file is at most 500 lines and has one reason to change. Split by reason, not by size alone.
+- No `any`, no `@ts-ignore`, no `@ts-nocheck`. A cast has a comment that says why.
+- A comment says WHAT and WHY, never HOW. Do not comment bad code: rewrite it (chapter 8).
+- Do not hide state behind a helper that does nothing (chapter 12: "do not use opaque accessors"). Do not add an option nobody uses.
+- Do not break what a caller sees. A change to the public API of a released tag needs a version bump and a note.
+
 ## Layout
 
 | Path | What is there |
 | --- | --- |
 | `src/index.ts` | Public exports. Add new public API here. |
 | `src/zpl.ts` | `ZplLabel` builder (BPLZ), `zplSettings`, `zplDownloadImage`, `testLabel`. |
-| `src/zplParse.ts` | `parseZpl`, `validateZpl`, `decodeGfaData`: reads ZPL text into drawable elements and issues. Pure TS. Used for previews. Not checked on a printer. |
+| `src/zplParse.ts`, `zplTokens.ts`, `zplTypes.ts` | `parseZpl`, `validateZpl`, `decodeGfaData`: reads ZPL text into drawable elements and issues. Pure TS. Used for previews. Not checked on a printer. `zplTypes` = result types, `zplTokens` = text to commands and the stateless checks, `zplParse` = the printer state and one method for each command. |
 | `src/design.ts` | `LabelDesign` (items in mm), `designToZpl`, `checkDesign`, FSSAI veg symbol. The ZPL always comes from the design, never typed by the user. Not checked on a printer. |
 | `src/probe.ts` | `PROBES` (read-only questions to a connected printer), parsers for the configuration report (`^HH`), `~HM` and key-value replies, `settingsFromConfig`. `LabelPrinter.ask(command)` sends one and returns the text. Nothing in it writes. Not checked on the SNBC printer. |
-| `src/receipt.ts` | Receipts (ESC/POS). `ReceiptDesign` (blocks: text, row, rule, feed, table, qr, barcode, cut), `layoutReceipt` (the lines as they print: the preview), `receiptToBytes` (bytes from the same lines, made by `@point-of-sale/receipt-printer-encoder` 4.0.1), `checkReceipt`. Pure TS. Paper is 16 to 48 columns. `ensureStructuredClone` is the Hermes guard. Send the bytes with `LabelPrinter.printRaw`. Not checked on a printer. See `docs/RECEIPT.md`. |
+| `src/receipt.ts` | Receipts (ESC/POS). `ReceiptDesign` (blocks: text, row, rule, feed, table, qr, barcode, cut), `layoutReceipt` (the lines as they print: the preview), `receiptToBytes` (bytes from the same lines, made by `@point-of-sale/receipt-printer-encoder` 4.0.1), `checkReceipt`. Pure TS. Paper is 16 to 48 columns. `ensureStructuredClone` is the Hermes guard. It is split in `receiptTypes.ts` (types), `receiptText.ts` (code pages, what can print, wrap and align), `receiptLayout.ts` (one function for each block kind) and `receipt.ts` (the public API and the bytes). Send the bytes with `LabelPrinter.printRaw`. Not checked on a printer. See `docs/RECEIPT.md`. |
 | `src/cpcl.ts` | `CpclLabel` builder (BPLC), `cpclSettings`. |
 | `src/bpla.ts` | `BplaLabel` builder. Experimental. Origin is bottom-left. |
 | `src/image.ts` | `ditherRgba`, `ditherGray`, `compressBitmap`. Call native code. Async. |
