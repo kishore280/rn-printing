@@ -5,7 +5,7 @@ import type { LinkEvent } from '../src/transport';
 type Handler = (...a: never[]) => void;
 
 /** A fake `react-native-tcp-socket` socket that records what happens to it. */
-function fakeSocket(options: { hangWrites?: boolean; noEnd?: boolean } = {}) {
+function fakeSocket(options: { hangWrites?: boolean; noEnd?: boolean; noNoDelay?: boolean; failWriteAt?: number } = {}) {
   const handlers: Record<string, Handler> = {};
   const log: string[] = [];
   const sent: number[][] = [];
@@ -13,12 +13,14 @@ function fakeSocket(options: { hangWrites?: boolean; noEnd?: boolean } = {}) {
     write: (data, _enc, cb) => {
       sent.push(Array.from(data as Uint8Array));
       log.push('write');
-      if (!options.hangWrites) cb?.(null);
+      if (options.failWriteAt !== undefined && sent.length === options.failWriteAt) cb?.(new Error('EPIPE'));
+      else if (!options.hangWrites) cb?.(null);
     },
-    on: (event, l) => { handlers[event] = l; return socket; },
+    on: (event: string, l: Handler) => { handlers[event] = l; return socket; },
     destroy: () => { log.push('destroy'); },
     ...(options.noEnd ? {} : { end: () => { log.push('end'); } }),
-  };
+    ...(options.noNoDelay ? {} : { setNoDelay: () => { log.push('nodelay'); } }),
+  } as TcpSocketLike;
   const emit = (event: string, ...args: unknown[]) => (handlers[event] as unknown as (...a: unknown[]) => void)?.(...args);
   return { socket, log, sent, emit };
 }
@@ -40,18 +42,21 @@ function transportOf(options: Partial<ConstructorParameters<typeof TcpTransport>
 }
 
 describe('TcpTransport: one job is one connection', () => {
-  it('sends FIN after the write, in this order: write, then end', async () => {
+  it('a write does not close the connection: the reply of a question must still be readable', async () => {
     const { t, sockets } = transportOf();
     await t.connect();
     await t.write(Uint8Array.of(1, 2, 3));
-    expect(sockets[0]!.log).toEqual(['write', 'end']);
-    expect(sockets[0]!.sent).toEqual([[1, 2, 3]]);
+    expect(await t.isConnected()).toBe(true);
+    expect(sockets[0]!.log).not.toContain('end');
+    expect(sockets[0]!.log).not.toContain('destroy');
   });
 
-  it('counts the link as closed after the job, so the next job opens a new connection', async () => {
+  it('endJob closes it after the pending writes (end), and the next job needs a new connection', async () => {
     const { t, sockets } = transportOf();
     await t.connect();
-    await t.write(Uint8Array.of(1));
+    await t.write(Uint8Array.of(1, 2, 3));
+    await t.endJob();
+    expect(sockets[0]!.log).toEqual(['nodelay', 'write', 'end']);
     expect(await t.isConnected()).toBe(false);
     await expect(t.write(Uint8Array.of(2))).rejects.toMatchObject({ code: 'E_NOT_CONNECTED' });
     await t.connect();
@@ -59,55 +64,53 @@ describe('TcpTransport: one job is one connection', () => {
     expect(sockets[0]!.log).toContain('destroy');
   });
 
-  it('still reads the printer reply after the half-close', async () => {
-    const { t, sockets } = transportOf();
-    await t.connect();
-    await t.write(new TextEncoder().encode('~HS'));
-    sockets[0]!.emit('data', [0x02, 0x41, 0x03]);
-    expect(Array.from(await t.read({ timeoutMs: 300, idleMs: 20 }))).toEqual([0x02, 0x41, 0x03]);
-  });
-
-  it('does not half-close with endOfJob none, and the link stays open', async () => {
+  it('endJob with endOfJob none keeps the link open', async () => {
     const { t, sockets } = transportOf({ endOfJob: 'none' });
     await t.connect();
     await t.write(Uint8Array.of(1));
+    await t.endJob();
     await t.write(Uint8Array.of(2));
-    expect(sockets[0]!.log).toEqual(['write', 'write']);
     expect(await t.isConnected()).toBe(true);
+    expect(sockets[0]!.log).toEqual(['nodelay', 'write', 'write']);
   });
 
-  it('keeps the link open when the socket has no end(): it cannot half-close', async () => {
+  it('a socket with no end() is destroyed at endJob', async () => {
     const { t, sockets } = transportOf({}, { noEnd: true });
     await t.connect();
-    await t.write(Uint8Array.of(1));
-    expect(sockets[0]!.log).toEqual(['write']);
-    expect(await t.isConnected()).toBe(true);
+    await t.endJob();
+    expect(sockets[0]!.log).toEqual(['nodelay', 'destroy']);
+  });
+
+  it('endJob when there is no connection does nothing', async () => {
+    const { t } = transportOf();
+    await expect(t.endJob()).resolves.toBeUndefined();
   });
 
   it('frees the socket when the printer does not close it, after closeWaitMs', async () => {
     const { t, sockets } = transportOf({ closeWaitMs: 20 });
     await t.connect();
-    await t.write(Uint8Array.of(1));
+    await t.endJob();
     expect(sockets[0]!.log).not.toContain('destroy');
     await new Promise((r) => setTimeout(r, 60));
-    expect(sockets[0]!.log).toEqual(['write', 'end', 'destroy']);
+    expect(sockets[0]!.log).toEqual(['nodelay', 'end', 'destroy']);
   });
 
-  it('does not destroy the socket early when the printer closes it first', async () => {
+  it('does not destroy the socket again when the printer closed it first', async () => {
     const { t, sockets } = transportOf({ closeWaitMs: 20 });
     await t.connect();
-    await t.write(Uint8Array.of(1));
+    await t.endJob();
     sockets[0]!.emit('close');
     await new Promise((r) => setTimeout(r, 60));
-    expect(sockets[0]!.log).toEqual(['write', 'end']);
+    expect(sockets[0]!.log).toEqual(['nodelay', 'end']);
   });
 
-  it('fails a write that does not finish: E_TIMEOUT, socket destroyed', async () => {
-    const { t, sockets } = transportOf({ writeTimeoutMs: 20 }, { hangWrites: true });
-    await t.connect();
-    await expect(t.write(Uint8Array.of(1))).rejects.toMatchObject({ code: 'E_TIMEOUT' });
-    expect(sockets[0]!.log).toContain('destroy');
-    expect(await t.isConnected()).toBe(false);
+  it('turns Nagle off once the connection is open, and works with a socket that cannot', async () => {
+    const a = transportOf();
+    await a.t.connect();
+    expect(a.sockets[0]!.log).toEqual(['nodelay']);
+    const b = transportOf({}, { noNoDelay: true });
+    await b.t.connect();
+    expect(b.sockets[0]!.log).toEqual([]);
   });
 
   it('ignores a late event of an old socket', async () => {
@@ -121,6 +124,62 @@ describe('TcpTransport: one job is one connection', () => {
   });
 });
 
+describe('TcpTransport: a write is sent in pieces', () => {
+  it('splits a job into pieces, in order, and reports progress after each', async () => {
+    const { t, sockets } = transportOf({ chunkSize: 4 });
+    await t.connect();
+    const progress: Array<[number, number]> = [];
+    await t.write(Uint8Array.from({ length: 10 }, (_, i) => i), { onProgress: (a, b) => progress.push([a, b]) });
+    expect(sockets[0]!.sent).toEqual([[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]);
+    expect(progress).toEqual([[4, 10], [8, 10], [10, 10]]);
+  });
+
+  it('an empty job writes nothing and does not fail', async () => {
+    const { t, sockets } = transportOf();
+    await t.connect();
+    await expect(t.write(new Uint8Array(0))).resolves.toBeUndefined();
+    expect(sockets[0]!.sent).toEqual([]);
+  });
+
+  it('cancel() stops between two pieces: E_CANCELLED, bytes sent are told, the connection closes', async () => {
+    const { t, sockets } = transportOf({ chunkSize: 4 });
+    await t.connect();
+    const job = t.write(new Uint8Array(12), { onProgress: () => t.cancel() });
+    await expect(job).rejects.toMatchObject({ code: 'E_CANCELLED', bytesSent: 4, nothingSent: false });
+    expect(sockets[0]!.sent).toHaveLength(1);
+    expect(sockets[0]!.log).toContain('destroy');
+    expect(await t.isConnected()).toBe(false);
+  });
+
+  it('an aborted signal stops the write before its first piece: nothing was sent', async () => {
+    const { t, sockets } = transportOf();
+    await t.connect();
+    const signal = { aborted: true, addEventListener: () => undefined, removeEventListener: () => undefined };
+    await expect(t.write(Uint8Array.of(1), { signal })).rejects.toMatchObject({ code: 'E_CANCELLED', bytesSent: 0, nothingSent: true });
+    expect(sockets[0]!.sent).toEqual([]);
+  });
+
+  it('a piece that does not finish is E_TIMEOUT for that piece, not for the whole job', async () => {
+    const { t, sockets } = transportOf({ writeTimeoutMs: 20 }, { hangWrites: true });
+    await t.connect();
+    await expect(t.write(Uint8Array.of(1))).rejects.toMatchObject({ code: 'E_TIMEOUT', bytesSent: 0 });
+    expect(sockets[0]!.log).toContain('destroy');
+    expect(await t.isConnected()).toBe(false);
+  });
+
+  it('a write error in the second piece says one piece went out (it may have printed)', async () => {
+    const { t } = transportOf({ chunkSize: 4 }, { failWriteAt: 2 });
+    await t.connect();
+    await expect(t.write(new Uint8Array(8))).rejects.toMatchObject({ code: 'E_WRITE', bytesSent: 4, nothingSent: false });
+  });
+
+  it('a long job to a slow printer is fine while every piece finishes in time', async () => {
+    const { t } = transportOf({ chunkSize: 1, writeTimeoutMs: 50 });
+    await t.connect();
+    await expect(t.write(new Uint8Array(200))).resolves.toBeUndefined();
+  });
+});
+
 describe('TcpTransport: link events', () => {
   async function events(run: (t: TcpTransport, sockets: ReturnType<typeof fakeSocket>[]) => Promise<void>, options = {}) {
     const { t, sockets } = transportOf(options);
@@ -130,10 +189,10 @@ describe('TcpTransport: link events', () => {
     return seen;
   }
 
-  it('connecting, connected, writing, then closed on purpose after a job', async () => {
-    const seen = await events(async (t) => { await t.connect(); await t.write(Uint8Array.of(1)); });
-    expect(seen.map((e) => e.state)).toEqual(['connecting', 'connected', 'writing', 'disconnected']);
-    expect(seen[3]).toMatchObject({ state: 'disconnected', reason: 'requested' });
+  it('connecting, connected, writing, connected, then closed on purpose at endJob', async () => {
+    const seen = await events(async (t) => { await t.connect(); await t.write(Uint8Array.of(1)); await t.endJob(); });
+    expect(seen.map((e) => e.state)).toEqual(['connecting', 'connected', 'writing', 'connected', 'disconnected']);
+    expect(seen[4]).toMatchObject({ state: 'disconnected', reason: 'requested' });
   });
 
   it('a close from the printer while the link is open is a lost link', async () => {
@@ -168,25 +227,37 @@ describe('TcpTransport: link events', () => {
 });
 
 describe('LabelPrinter over TcpTransport', () => {
-  it('prints two jobs on two connections and the health is not "lost" between them', async () => {
+  it('prints two jobs on two connections, each closed when its job is done, and the health is not "lost" between them', async () => {
     const { t, sockets } = transportOf();
     const lp = new LabelPrinter(t);
     await lp.printRaw(Uint8Array.of(1, 2));
     await lp.printRaw(Uint8Array.of(3));
     expect(sockets).toHaveLength(2);
     expect(sockets.map((s) => s.sent)).toEqual([[[1, 2]], [[3]]]);
+    expect(sockets[0]!.log).toContain('end');
     expect(lp.health).not.toBe('lost');
     await lp.dispose();
   });
 
-  it('asks a question on one connection and reads the reply', async () => {
+  it('asks a question on one connection, reads the reply, and only then closes', async () => {
     const { t, sockets } = transportOf();
     const lp = new LabelPrinter(t);
     const pending = lp.ask('~HS');
     // ask() first reads and drops old bytes (100 ms), then writes: the reply comes after that.
     await new Promise((r) => setTimeout(r, 200));
+    expect(sockets[0]!.log).not.toContain('end');
     sockets[0]!.emit('data', Array.from(new TextEncoder().encode('\u0002030,0,0,1\u0003')));
     expect(await pending).toContain('030,0,0,1');
+    expect(sockets[0]!.log).toContain('end');
+    await lp.dispose();
+  });
+
+  it('a print whose close fails is still a print that went out: no error, no second send', async () => {
+    const { t, sockets } = transportOf();
+    t.endJob = () => Promise.reject(new Error('close failed'));
+    const lp = new LabelPrinter(t);
+    await expect(lp.printRaw(Uint8Array.of(1))).resolves.toBeUndefined();
+    expect(sockets[0]!.sent).toEqual([[1]]);
     await lp.dispose();
   });
 });

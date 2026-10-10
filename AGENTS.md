@@ -44,10 +44,10 @@ Read this file before you change the code. It tells you where things are, how th
 | `src/printer.ts` | `LabelPrinter`: queue (mutex), `print`, `printRaw` (bytes), `printAll`, status. |
 | `src/reconnect.ts` | cockatiel retry policy, transient-error rule, `ReconnectOptions`, `ConnectionEvent`. Used by `LabelPrinter`. |
 | `src/status.ts` | Parsers for `~HS` and `~HQES` replies. |
-| `src/transport.ts` | `Transport` interface, `LinkState`, `LinkEvent`, `WriteOptions`. The link events and `cancel` are optional on a transport. |
+| `src/transport.ts` | `Transport` interface, `LinkState`, `LinkEvent`, `WriteOptions`. The link events, `cancel` and `endJob` are optional on a transport. |
 | `src/linkHealth.ts` | Pure rules: is the link really lost? `up` / `wobbling` / `lost` / `unknown`. Up is never delayed; down waits 4 s or two hard failures. `LabelPrinter.health` runs it. Numbers are NOT measured on the printer. |
 | `src/errorCodes.ts` | The one table of error codes (transient, before any byte, user must fix). `__tests__/errorCodes.test.ts` fails when Kotlin, Swift or TS use a code that is not in it. |
-| `src/transports/` | `tcp.ts` (one job = one connection: half-close after the write, link events, write timeout; fake-socket tests only), `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLE` scan/connect + `BluetoothLETransport`, Nitro; `readGatt()` reads every readable characteristic), `sig.ts` (Bluetooth SIG names and decoders for 16-bit UUIDs only), `bleGatt.ts` (pure GATT selection), `chunk.ts` (pure splitting), `tcp.ts`, `inbox.ts`. |
+| `src/transports/` | `tcp.ts` (one job = one connection: `endJob()` closes it; pieces with progress and cancel, a time limit for each piece, `TCP_NODELAY`, link events; fake-socket tests only), `bluetoothClassic.ts` (Nitro), `bluetoothLE.ts` (`BluetoothLE` scan/connect + `BluetoothLETransport`, Nitro; `readGatt()` reads every readable characteristic), `sig.ts` (Bluetooth SIG names and decoders for 16-bit UUIDs only), `bleGatt.ts` (pure GATT selection), `chunk.ts` (pure splitting), `tcp.ts`, `inbox.ts`. |
 | `src/native.ts` | Lazy loading of Nitro objects. `setNativeCodec` / `setClassicBluetooth` for tests. |
 | `src/encoding.ts` | base64, UTF-8, Latin-1 helpers. |
 | `src/errors.ts` | Error classes. |
@@ -159,7 +159,7 @@ CI (`.github/workflows/ci.yml`) runs all of these. Make them pass before you ope
 | BLE audit fixes (op kinds in `GattOpGuard`, connect overlap, stale notifications, `E_AUTH` on connect) | TypeScript: unit-tested, and shown to fail without the fix. Kotlin: compiled; `GattOpGuard` JVM race test passes (42 checks). Not run on a device. |
 | Receipt layout and ESC/POS bytes (`src/receipt.ts`) | TypeScript unit tests only. A real SPRT SP-POS894UED printed receipts over BLE (owner's photos, 2026-10-09). The cut is `GS V 66 0` / `GS V 65 0` (feed to the cutter, then cut; the vendor tool sends the same bytes): the plain cut cut the end of a receipt off. NOT checked on the printer after this change. Hermes (`structuredClone` guard) NOT run. |
 | BLE failed pairing (`PairingWatch`, `E_AUTH` after a close with status 19) | Kotlin: compiled; the rule is tested on a JVM (11 checks). Not run on a device. Swift: not done (iOS pairs by itself). See `docs/BLE-HARDENING.md` section 11. |
-| TCP transport (`TcpTransport`: half-close after each job, link events, write timeout) | TypeScript: unit-tested with a fake socket (`__tests__/tcp-job.test.ts`). Not run with `react-native-tcp-socket`, a network printer, PrinterOne or `p910nd`. See `docs/REFERENCES.md`. |
+| TCP transport (`TcpTransport`: `endJob()` closes the connection, 16 KiB pieces with progress and cancel, link events) | TypeScript: unit-tested with a fake socket (`__tests__/tcp-job.test.ts`). Not run with `react-native-tcp-socket`, a network printer, PrinterOne or `p910nd`. See `docs/REFERENCES.md`. |
 | Gradle, CMake, Xcode builds | NOT run. |
 | BPLA record layout | NOT tested on a printer. |
 | `~HS` / `~HQES` / `~HI` / `~HM` / `^HH` replies | Real replies of a ready printer are in the tests (`docs/REFERENCES.md`). Replies with a fault were NOT seen. |

@@ -47,4 +47,10 @@ export interface Transport {
   onConnectionState?(listener: (event: LinkEvent) => void): () => void;
   /** Optional. Stop the write that runs now, between two pieces. */
   cancel?(): void;
+  /**
+   * Optional. The job is done: a print after its last byte went out, a question after its reply was read. A transport that uses one connection
+   * for each job (TCP) closes it now; a transport that keeps its link (Bluetooth) leaves this out. `LabelPrinter` calls it and ignores its error:
+   * a job that was sent is never failed, and never sent again, because the close went wrong.
+   */
+  endJob?(): Promise<void>;
 }
