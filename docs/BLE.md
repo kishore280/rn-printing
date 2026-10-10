@@ -36,6 +36,21 @@ Ask the user at run time: `await BluetoothLE.requestPermissions()`.
 Add `NSBluetoothAlwaysUsageDescription` to Info.plist. Run `pod install`. iOS shows the permission dialog at the first scan or connect.
 Bluetooth Classic is not available on iOS (Apple allows it only with MFi hardware). Use BLE or TCP.
 
+#### iOS: the app in the background
+
+Apple (Core Bluetooth Background Processing): an app with no Bluetooth background mode is suspended soon after it leaves the foreground.
+It cannot use Bluetooth then, and it learns of a lost link only when it runs again. The package does not keep the app awake. The host app must:
+
+1. Add `bluetooth-central` to `UIBackgroundModes` in Info.plist. With it, iOS keeps the link and wakes the app for Bluetooth events. The app still has only a short time in the background, so it must not rely on this for a long job.
+2. Not let a job end half way. Read `printer.busy` (it is true while a job runs or waits). While it is true, ask iOS for more time with `UIApplication.beginBackgroundTask` (in a native module of the app) and end that task when `busy` is false again. Do not call `printer.release()` until then.
+3. Know that a job can still be cut. If the link drops while bytes go out, `print()` rejects with `E_DISCONNECTED`, `nothingSent` false and `bytesSent` set. The outcome is unknown: part of the label may have printed. The package never sends that job again (only `resendAfterPartialWrite` allows it). Show the person the failure and let them print again.
+4. State restoration (`CBCentralManagerOptionRestoreIdentifierKey`) is not used by this package. A link is opened again by the next job.
+
+#### iOS: the device id can change
+
+iOS gives each device an id that belongs to the phone. It can change when the printer uses a resolvable private address and the phone has forgotten it. Then `connect()` fails with `E_DEVICE_NOT_FOUND`.
+Pass the scan result (not only its id) and `{ rediscover: true }` to `BluetoothLETransport`. The transport then scans once (4 s) with the saved services as filter, and connects to the one device that has the saved name. It refuses two matches. After the connect, `transport.id` is the id to save. It is off by default: two printers with one name in range would be mixed up. If the printer is not advertising (it is connected to another app), the scan finds nothing: the person must scan and choose again.
+
 ## Use
 
 ```ts
@@ -234,4 +249,4 @@ Run it on one Android phone and one iPhone. Write down the result.
 ## What was and was not checked
 
 See [REFERENCES.md](REFERENCES.md). In short: the TypeScript logic is unit-tested with a fake native layer. The Kotlin code compiles against the Android 14 API.
-The Swift code is NOT compiled (no Swift toolchain in CI). Nothing ran on a device.
+The Swift code compiles in CI (job `ios`, Simulator SDK). Nothing ran on a device.

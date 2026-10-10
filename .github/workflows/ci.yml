@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -60,3 +61,21 @@ jobs:
           path: .cache/kotlin-check
           key: kotlin-check-${{ hashFiles('scripts/check-kotlin.sh', 'package-lock.json') }}
       - run: bash scripts/check-kotlin.sh
+
+  ios:
+    name: Swift and iOS pod compile (Xcode)
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Generated files must be up to date
+        run: |
+          npx nitrogen
+          git diff --exit-code -- nitrogen || {
+            echo "nitrogen/generated is stale. Run 'npx nitrogen' and commit the result."; exit 1; }
+      - run: bash scripts/check-ios.sh

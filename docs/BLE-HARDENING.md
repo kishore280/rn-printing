@@ -175,7 +175,7 @@ What we do (`bond: 'auto'` is the default; `bond: 'never'` turns it off):
 
 Not verified: the TVS LP 46 Dlite may not need pairing at all. A user wrote to it with nRF Connect and it printed. The flow is unit-tested with a fake link (8 tests) and the Kotlin code is compiled. It has not run on a device.
 
-### iOS code written from Apple's documentation (NOT compiled, NOT run)
+### iOS code written from Apple's documentation (compiled in CI, NOT run)
 
 No Swift toolchain exists here. Each item follows the Apple documentation named, and each is open for a Mac build.
 
@@ -312,3 +312,17 @@ Found by reading how the app calls the package. Fixed here:
   The first piece of a write with response now gets `bondTimeoutMs` on top of the write time. Written from Apple's CoreBluetooth docs: NOT run on an iPhone.
 
 Tests: `__tests__/printer.test.ts` (attempts, nothing sent). Not checked on a printer.
+
+## 16. Round 11: iOS in the background, and an iOS device id that changes (2026-10-10, 0.4.5)
+
+**Sources.** Apple, Core Bluetooth Programming Guide, "Core Bluetooth Background Processing for iOS Apps" (read): the `bluetooth-central` mode lets the app scan, connect and use data in the background and wakes it for delegate events; without the mode the app is suspended soon, Bluetooth events are queued until it runs, and a link that drops is not seen; the keys `CBConnectPeripheralOptionNotifyOnDisconnectionKey` and the like make the system show an alert; state restoration is opt-in with a restore identifier; a woken app has about 10 s. Apple's reference pages for `retrievePeripherals(withIdentifiers:)` and `retrieveConnectedPeripherals(withServices:)` would not load as text here. What this section says about them is from memory of the API and is NOT checked: the first returns only peripherals the system knows; the second needs service UUIDs and lists peripherals connected to the system by any app; the identifier is made for each phone.
+
+**Decided.**
+
+- The package cannot hold an app awake (that is `UIApplication.beginBackgroundTask`, the host app's job). It gives the app `printer.busy` (0.4.3) and documents the steps (`docs/BLE.md`, "iOS: the app in the background").
+- A write cut by a link loss is already "outcome unknown": `nothingSent` is false once a native write began, `bytesSent` says how many bytes were accepted, and `withLink` does not send a job again unless `resendAfterPartialWrite`. No new error code: `E_DISCONNECTED` is the right one. Tests now name this rule (`printer.test.ts`, `bluetoothLE.test.ts`).
+- Swift (`BleCentral`): counts `didEnterBackground`, and when a link ends and the app was in the background while it was open, the reason says so and names `bluetooth-central`. Written from Apple's docs. compiled in CI, NOT run.
+- Not done: `CBConnectPeripheralOptionNotifyOnDisconnectionKey` (a system alert the host app did not ask for), state restoration (a restored link would need a place to hand the connection to; a job opens its own link), and `bluetooth-central` in the package (a package cannot change the host Info.plist, and the mode is a store review question for the app).
+- Device id: `BluetoothLETransport` option `rediscover`. On `E_DEVICE_NOT_FOUND` it scans once for the saved services and keeps the devices with the saved name. It connects only when exactly one fits (`bleRediscover.ts`), and `transport.id` gives the new id. Default off, because two printers with one name in range could print a label on the wrong one. The logic is in TypeScript (no spec change, so no `nitrogen` change) and is unit-tested with a fake. The Swift `open()` only says more in its message. `retrieveConnectedPeripherals(withServices:)` is NOT used: a service list is not passed to the native `connect`, and a spec change was too large for this round. So a printer that another app holds connected does not advertise, and the fallback cannot find it.
+
+**Argued, not tested:** all Swift changes; that iOS drops a link while a suspended app has no background mode (Apple's text, not seen on a phone); that the scan finds the printer with a new id. **Tested:** the TypeScript rules above (`printer.test.ts`, `bluetoothLE.test.ts`).

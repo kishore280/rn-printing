@@ -215,6 +215,42 @@ describe('LabelPrinter: cancel and a failed write', () => {
   });
 });
 
+describe('LabelPrinter: a link cut in the middle of a job (iOS app suspended)', () => {
+  const cut = () => Object.assign(new TransportError('The device disconnected after 40 of 200 bytes: the app was suspended', 'E_DISCONNECTED'), { nothingSent: false, bytesSent: 40 });
+
+  it('never sends the job again, and tells the caller that the outcome is unknown', async () => {
+    let calls = 0;
+    class Cut extends FakeTransport {
+      override async write(): Promise<void> {
+        calls++;
+        throw cut();
+      }
+    }
+    const printer = new LabelPrinter(new Cut(), { reconnect: { initialDelayMs: 1, maxDelayMs: 2, jitter: false } });
+    await expect(printer.print('~JC')).rejects.toMatchObject({ code: 'E_DISCONNECTED', nothingSent: false, bytesSent: 40 });
+    expect(calls).toBe(1);
+  });
+
+  it('`busy` is true while the job runs, so the host app can start a background task', async () => {
+    let release: () => void = () => undefined;
+    class Slow extends FakeTransport {
+      override async write(): Promise<void> {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+    }
+    const printer = new LabelPrinter(new Slow());
+    expect(printer.busy).toBe(false);
+    const job = printer.print('~JC');
+    await new Promise((r) => setTimeout(r, 5));
+    expect(printer.busy).toBe(true);
+    release();
+    await job;
+    expect(printer.busy).toBe(false);
+  });
+});
+
 describe('LabelPrinter.printRaw', () => {
   it('sends the bytes as they are, and connects by itself', async () => {
     const t = new FakeTransport();

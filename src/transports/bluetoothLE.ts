@@ -4,6 +4,7 @@ import { toArrayBuffer } from '../native';
 import type { BleConnection } from '../specs/BleConnection.nitro';
 import type { ReadOptions, Transport } from '../transport';
 import { classify, native, sleep, stripUndefined, wrap } from './bleCommon';
+import { RediscoverHint, connectOrFind, hintOf } from './bleRediscover';
 import {
   BleGattCharacteristic,
   BleSelection,
@@ -24,11 +25,9 @@ import type {
 import { chunkBytes } from './chunk';
 import { shortUuid } from './sig';
 import { Inbox } from './inbox';
-
 export * from './bleTypes';
 export { classify } from './bleCommon';
 export { BleDeviceConnection, BluetoothLE, bleFilters } from './bleScan';
-
 
 /** The native side has its own time limit; this guard is for a native promise that never settles. */
 const GUARD_MARGIN_MS = 1000;
@@ -47,7 +46,8 @@ const LOWEST_PAYLOAD = 20; // the smallest BLE packet: MTU 23 minus 3
  * `LabelPrinter` reconnects through `connect()`. This class has no retry loop of its own.
  */
 export class BluetoothLETransport implements Transport {
-  private readonly deviceId: string;
+  private deviceId: string;
+  private readonly hint: RediscoverHint | null;
   private readonly settings: BluetoothLETransportOptions;
   private readonly inbox = new Inbox();
   private readonly stateListeners = new Set<(event: BleConnectionStateEvent) => void>();
@@ -70,12 +70,16 @@ export class BluetoothLETransport implements Transport {
   private lastWriteStats: BleWriteStats | null = null;
 
   /** `device` is a scan result or its id. The transport opens its own link, so it can open it again later. */
-  constructor(device: string | { id: string }, options: BluetoothLETransportOptions = {}) {
+  constructor(device: string | { id: string; name?: string | null; serviceUuids?: string[] }, options: BluetoothLETransportOptions = {}) {
     this.deviceId = typeof device === 'string' ? device : device.id;
+    this.hint = options.rediscover === true && typeof device !== 'string' ? hintOf(device) : null;
     const p = options.profile;
     // Options win over the profile.
     this.settings = { ...stripUndefined(p ?? {}), ...stripUndefined(options) };
   }
+
+  /** The id of the last connect. With `rediscover` it can be a new iOS id: keep it. */
+  get id(): string { return this.deviceId; }
 
   /** The characteristic table found on the last connect. Empty before the first connect. */
   get gatt(): readonly BleGattCharacteristic[] {
@@ -116,10 +120,8 @@ export class BluetoothLETransport implements Transport {
     this.discoverMs = null;
     try {
       const t0 = Date.now();
-      link = await wrap(
-        mod.connect(this.deviceId, this.settings.connectTimeoutMs ?? 10000, (reason) => this.onLinkLost(gen, reason)),
-        'E_CONNECT'
-      );
+      const opened = await connectOrFind(mod, this.deviceId, this.hint, this.settings.connectTimeoutMs ?? 10000, (r) => this.onLinkLost(gen, r));
+      ({ link, id: this.deviceId } = opened);
       // disconnect() or a newer connect() came while this one opened: this link is not wanted. Close it, touch nothing else.
       this.assertWanted(gen);
       this.link = link;
