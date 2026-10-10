@@ -2,10 +2,15 @@ import { TransportError } from '../errors';
 import type { LinkEvent, LinkState, ReadOptions, Transport } from '../transport';
 import { Inbox } from './inbox';
 
-/** The parts of a `react-native-tcp-socket` socket that we use. */
+/**
+ * The parts of a `react-native-tcp-socket` socket that we use. `on` is one overload for each event, so the library's own `Socket` type fits
+ * without a cast (its `on` takes the event name and the matching argument list).
+ */
 export interface TcpSocketLike {
   write(data: Uint8Array | string, encoding?: string, cb?: (error?: Error | null) => void): unknown;
-  on(event: string, listener: (...args: never[]) => void): unknown;
+  on(event: 'data', listener: (chunk: string | Uint8Array) => void): unknown;
+  on(event: 'error', listener: (error: Error) => void): unknown;
+  on(event: 'close', listener: (hadError: boolean) => void): unknown;
   destroy(): void;
   /** Half-close: send FIN and keep reading (`react-native-tcp-socket` has it). Needed for `endOfJob: 'half-close'`. */
   end?(): unknown;
@@ -46,13 +51,13 @@ export interface TcpTransportOptions {
   closeWaitMs?: number;
 }
 
-function toBytes(chunk: unknown): Uint8Array {
+function toBytes(chunk: string | Uint8Array): Uint8Array {
   if (typeof chunk === 'string') {
     const out = new Uint8Array(chunk.length);
     for (let i = 0; i < chunk.length; i++) out[i] = chunk.charCodeAt(i) & 0xff;
     return out;
   }
-  return Uint8Array.from(chunk as ArrayLike<number>);
+  return Uint8Array.from(chunk);
 }
 
 /**
@@ -139,12 +144,12 @@ export class TcpTransport implements Transport {
         resolve();
       });
       this.socket = socket;
-      socket.on('data', (chunk: unknown) => {
+      socket.on('data', (chunk) => {
         if (this.socket === socket) this.inbox.push(toBytes(chunk));
       });
-      socket.on('error', (err: { message?: string } | undefined) => {
+      socket.on('error', (err: Error) => {
         if (this.socket !== socket) return;
-        this.lastError = err?.message ?? 'TCP error';
+        this.lastError = err.message || 'TCP error';
         if (!settled) {
           settled = true;
           clearTimeout(timer);
