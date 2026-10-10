@@ -5,7 +5,7 @@ import type { LinkEvent } from '../src/transport';
 type Handler = (...a: never[]) => void;
 
 /** A fake `react-native-tcp-socket` socket that records what happens to it. */
-function fakeSocket(options: { hangWrites?: boolean; noEnd?: boolean; noNoDelay?: boolean; failWriteAt?: number } = {}) {
+function fakeSocket(options: { hangWrites?: boolean; noNoDelay?: boolean; failWriteAt?: number } = {}) {
   const handlers: Record<string, Handler> = {};
   const log: string[] = [];
   const sent: number[][] = [];
@@ -18,7 +18,6 @@ function fakeSocket(options: { hangWrites?: boolean; noEnd?: boolean; noNoDelay?
     },
     on: (event: string, l: Handler) => { handlers[event] = l; return socket; },
     destroy: () => { log.push('destroy'); },
-    ...(options.noEnd ? {} : { end: () => { log.push('end'); } }),
     ...(options.noNoDelay ? {} : { setNoDelay: () => { log.push('nodelay'); } }),
   } as TcpSocketLike;
   const emit = (event: string, ...args: unknown[]) => (handlers[event] as unknown as (...a: unknown[]) => void)?.(...args);
@@ -47,61 +46,24 @@ describe('TcpTransport: one job is one connection', () => {
     await t.connect();
     await t.write(Uint8Array.of(1, 2, 3));
     expect(await t.isConnected()).toBe(true);
-    expect(sockets[0]!.log).not.toContain('end');
     expect(sockets[0]!.log).not.toContain('destroy');
   });
 
-  it('endJob closes it after the pending writes (end), and the next job needs a new connection', async () => {
+  it('endJob closes the connection, and the next job needs a new one', async () => {
     const { t, sockets } = transportOf();
     await t.connect();
     await t.write(Uint8Array.of(1, 2, 3));
     await t.endJob();
-    expect(sockets[0]!.log).toEqual(['nodelay', 'write', 'end']);
+    expect(sockets[0]!.log).toEqual(['nodelay', 'write', 'destroy']);
     expect(await t.isConnected()).toBe(false);
     await expect(t.write(Uint8Array.of(2))).rejects.toMatchObject({ code: 'E_NOT_CONNECTED' });
     await t.connect();
     expect(sockets).toHaveLength(2);
-    expect(sockets[0]!.log).toContain('destroy');
-  });
-
-  it('endJob with endOfJob none keeps the link open', async () => {
-    const { t, sockets } = transportOf({ endOfJob: 'none' });
-    await t.connect();
-    await t.write(Uint8Array.of(1));
-    await t.endJob();
-    await t.write(Uint8Array.of(2));
-    expect(await t.isConnected()).toBe(true);
-    expect(sockets[0]!.log).toEqual(['nodelay', 'write', 'write']);
-  });
-
-  it('a socket with no end() is destroyed at endJob', async () => {
-    const { t, sockets } = transportOf({}, { noEnd: true });
-    await t.connect();
-    await t.endJob();
-    expect(sockets[0]!.log).toEqual(['nodelay', 'destroy']);
   });
 
   it('endJob when there is no connection does nothing', async () => {
     const { t } = transportOf();
     await expect(t.endJob()).resolves.toBeUndefined();
-  });
-
-  it('frees the socket when the printer does not close it, after closeWaitMs', async () => {
-    const { t, sockets } = transportOf({ closeWaitMs: 20 });
-    await t.connect();
-    await t.endJob();
-    expect(sockets[0]!.log).not.toContain('destroy');
-    await new Promise((r) => setTimeout(r, 60));
-    expect(sockets[0]!.log).toEqual(['nodelay', 'end', 'destroy']);
-  });
-
-  it('does not destroy the socket again when the printer closed it first', async () => {
-    const { t, sockets } = transportOf({ closeWaitMs: 20 });
-    await t.connect();
-    await t.endJob();
-    sockets[0]!.emit('close');
-    await new Promise((r) => setTimeout(r, 60));
-    expect(sockets[0]!.log).toEqual(['nodelay', 'end']);
   });
 
   it('turns Nagle off once the connection is open, and works with a socket that cannot', async () => {
@@ -114,7 +76,7 @@ describe('TcpTransport: one job is one connection', () => {
   });
 
   it('ignores a late event of an old socket', async () => {
-    const { t, sockets } = transportOf({ endOfJob: 'none' });
+    const { t, sockets } = transportOf();
     await t.connect();
     await t.connect();
     sockets[0]!.emit('close');
@@ -196,12 +158,12 @@ describe('TcpTransport: link events', () => {
   });
 
   it('a close from the printer while the link is open is a lost link', async () => {
-    const seen = await events(async (t, sockets) => { await t.connect(); sockets[0]!.emit('close'); }, { endOfJob: 'none' });
+    const seen = await events(async (t, sockets) => { await t.connect(); sockets[0]!.emit('close'); });
     expect(seen[seen.length - 1]).toMatchObject({ state: 'disconnected', reason: 'closed by the printer' });
   });
 
   it('a socket error is reported with the error', async () => {
-    const seen = await events(async (t, sockets) => { await t.connect(); sockets[0]!.emit('error', new Error('ECONNRESET')); }, { endOfJob: 'none' });
+    const seen = await events(async (t, sockets) => { await t.connect(); sockets[0]!.emit('error', new Error('ECONNRESET')); });
     const last = seen[seen.length - 1]!;
     expect(last.state).toBe('disconnected');
     expect(last.error?.message).toBe('ECONNRESET');
@@ -234,7 +196,7 @@ describe('LabelPrinter over TcpTransport', () => {
     await lp.printRaw(Uint8Array.of(3));
     expect(sockets).toHaveLength(2);
     expect(sockets.map((s) => s.sent)).toEqual([[[1, 2]], [[3]]]);
-    expect(sockets[0]!.log).toContain('end');
+    expect(sockets[0]!.log).toContain('destroy');
     expect(lp.health).not.toBe('lost');
     await lp.dispose();
   });
@@ -245,10 +207,10 @@ describe('LabelPrinter over TcpTransport', () => {
     const pending = lp.ask('~HS');
     // ask() first reads and drops old bytes (100 ms), then writes: the reply comes after that.
     await new Promise((r) => setTimeout(r, 200));
-    expect(sockets[0]!.log).not.toContain('end');
+    expect(sockets[0]!.log).not.toContain('destroy');
     sockets[0]!.emit('data', Array.from(new TextEncoder().encode('\u0002030,0,0,1\u0003')));
     expect(await pending).toContain('030,0,0,1');
-    expect(sockets[0]!.log).toContain('end');
+    expect(sockets[0]!.log).toContain('destroy');
     await lp.dispose();
   });
 
