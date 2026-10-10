@@ -16,8 +16,10 @@ npm install --no-audit --no-fund
 npm install --no-audit --no-fund "react-native-nitro-modules@$NITRO"
 # A symlink keeps the podspec's __dir__ at the repo, so the build compiles the files in the repo.
 ln -s "$ROOT" node_modules/react-native-bplz-label-printer
+# Autolinking reads the dependencies of the host package.json.
+npm pkg set dependencies.react-native-bplz-label-printer="*"
 (cd ios && pod install)
-grep -q NitroBplzLabel ios/Podfile.lock
+grep -n "NitroBplzLabel" ios/Podfile.lock || { echo "pod NitroBplzLabel was not linked"; exit 1; }
 xcodebuild -workspace ios/BplzHost.xcworkspace -scheme BplzHost \
   -sdk iphonesimulator -configuration Debug -destination 'generic/platform=iOS Simulator' \
   CODE_SIGNING_ALLOWED=NO build
