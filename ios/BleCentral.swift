@@ -199,7 +199,7 @@ final class BleCentral: NSObject, CBCentralManagerDelegate {
     let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name ?? ""
     let uuids = ((advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []).map(BleSupport.fullUuid)
     let manufacturer = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data).map(BleSupport.hex) ?? ""
-    let connectable = (advertisementData[CBAdvertisementDataIsConnectableKey] as? NSNumber)?.boolValue ?? true
+    let connectable = (advertisementData[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue ?? true
     let tx = (advertisementData[CBAdvertisementDataTxPowerLevelKey] as? NSNumber)?.doubleValue
     // 127 means "not available" in CoreBluetooth.
     let rssi: Double? = RSSI.intValue == 127 ? nil : RSSI.doubleValue
