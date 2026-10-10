@@ -342,7 +342,7 @@ export class BluetoothLETransport implements Transport {
           throw new TransportError(`The device disconnected after ${sent} of ${data.length} bytes: ${this.lostReason ?? 'link lost'}`, 'E_DISCONNECTED');
         }
         started = true;
-        await this.writePiece(link, pick, piece, timeoutMs, sent, data.length);
+        await this.writePiece(link, pick, piece, index === 0 ? this.firstPieceTimeoutMs(pick, timeoutMs) : timeoutMs, sent, data.length);
         sent += piece.length;
         options.onProgress?.(sent, data.length);
         if (delay > 0 && index < pieces.length - 1) await sleep(delay);
@@ -410,6 +410,15 @@ export class BluetoothLETransport implements Transport {
     this.unsubscribe = null;
     this.setState('disconnected', error.message, error);
     await link?.disconnect().catch(() => undefined);
+  }
+
+  /**
+   * iOS has no bond call: the system shows its pairing dialog when the first write that needs encryption arrives, and answers that write
+   * only after the person has typed the code. So the first piece gets the pairing time as well (read from Apple's docs: not run on an iPhone).
+   */
+  private firstPieceTimeoutMs(pick: BleSelection, timeoutMs: number): number {
+    if (Platform.OS !== 'ios' || !pick.withResponse) return timeoutMs;
+    return timeoutMs + (this.settings.bondTimeoutMs ?? DEFAULT_BOND_TIMEOUT_MS);
   }
 
   private async writePiece(

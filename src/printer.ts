@@ -144,10 +144,10 @@ export class LabelPrinter {
   }
 
   /** Open the link (with retry) if it is closed. */
-  private async ensureConnected(): Promise<void> {
+  private async ensureConnected(attempts?: number): Promise<void> {
     this.assertNotDisposed();
     if (await this.transport.isConnected().catch(() => false)) return;
-    await this.open();
+    await this.open(attempts);
   }
 
   /**
@@ -159,14 +159,17 @@ export class LabelPrinter {
     if (this.disposed) throw new TransportError('The printer was closed', 'E_CANCELLED');
   }
 
-  private async open(): Promise<void> {
+  private async open(attempts?: number): Promise<void> {
     await this.transport.disconnect().catch(() => undefined);
+    // A caller can ask for fewer tries than the printer's policy (never more): a status poll must not wait out a long retry.
+    const policy =
+      attempts === undefined ? this.reconnect : { ...this.reconnect, maxAttempts: Math.min(this.reconnect.maxAttempts, Math.max(1, attempts)) };
     await connectWithRetry(
       () => {
         this.assertNotDisposed();
         return this.transport.connect();
       },
-      this.reconnect,
+      policy,
       this.onEvent
     );
   }
@@ -179,7 +182,13 @@ export class LabelPrinter {
    *   because part of the label may already be printing.
    */
   private async withLink<T>(job: () => Promise<T>, idempotent: boolean): Promise<T> {
-    await this.ensureConnected();
+    try {
+      await this.ensureConnected();
+    } catch (e) {
+      // The job never began: no byte went out, so a caller may say "nothing was printed".
+      if (e !== null && typeof e === 'object') (e as { nothingSent?: boolean }).nothingSent = true;
+      throw e;
+    }
     try {
       return await job();
     } catch (e) {
@@ -218,8 +227,8 @@ export class LabelPrinter {
    * job that was still draining (a close drops what is not sent: Linux `rfcomm_sock_destruct`), freed the printer's one connection for another
    * phone at every check, and paid a full connect each time.
    */
-  connect(): Promise<void> {
-    return this.exclusive(() => this.ensureConnected());
+  connect(options?: { attempts?: number }): Promise<void> {
+    return this.exclusive(() => this.ensureConnected(options?.attempts));
   }
 
   /** A job is running or waiting. A status check can skip a printer that is busy (it would open a second connection to a printer that takes one). */
