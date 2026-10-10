@@ -41,6 +41,11 @@ class HybridClassicBluetooth : HybridClassicBluetoothSpec() {
       if (!bt.isEnabled) throw Error("Bluetooth is off")
       if (!BluetoothAdapter.checkBluetoothAddress(address)) throw Error("Bad Bluetooth address: $address")
       val device = bt.getRemoteDevice(address)
+      // A printer that the person unpaired in the phone settings stays saved in the app. Connecting to it starts a system pairing dialog in the
+      // middle of a print or a background check (the secure socket pairs by itself), so it is refused here with words that say what to do.
+      if (device.bondState != BluetoothDevice.BOND_BONDED) {
+        throw Error("The printer is not paired with this phone any more. Pair it again in the phone's Bluetooth settings")
+      }
       val socket = openSocket(bt, device, preferInsecure)
       val connection: HybridClassicConnectionSpec = HybridClassicConnection(socket)
       return@parallel connection
@@ -56,7 +61,7 @@ class HybridClassicBluetooth : HybridClassicBluetoothSpec() {
   /** Secure socket, then insecure socket. A hidden-API socket on channel 1 is the last try. */
   private fun openSocket(bt: BluetoothAdapter, device: BluetoothDevice, preferInsecure: Boolean): BluetoothSocket {
     // Android advises to stop discovery before connect(), because it slows the link.
-    // It needs BLUETOOTH_SCAN on Android 12 and newer. We do not ask for it, so a refusal is fine.
+    // It needs BLUETOOTH_SCAN on Android 12 and newer. `requestPermissions` asks for it together with BLUETOOTH_CONNECT, and a refusal is fine.
     try {
       bt.cancelDiscovery()
     } catch (_: SecurityException) {

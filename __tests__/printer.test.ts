@@ -286,3 +286,48 @@ describe('LabelPrinter dispose', () => {
     expect(t.written).toHaveLength(0);
   });
 });
+
+describe('LabelPrinter: connect, reopen and release (found by the audit of the app, Classic)', () => {
+  /** A transport that counts what is done to it. */
+  class Counting extends FakeTransport {
+    log: string[] = [];
+    async connect() { this.log.push('connect'); await super.connect(); }
+    async disconnect() { this.log.push('disconnect'); await super.disconnect(); }
+  }
+
+  it('connect() on an open link does nothing: a status check must not close and open the link again', async () => {
+    const t = new Counting();
+    const p = new LabelPrinter(t);
+    await p.connect();
+    await p.connect();
+    await p.connect();
+    expect(t.log).toEqual(['disconnect', 'connect']); // opened once (the first open clears the transport first)
+  });
+
+  it('reopen() closes and opens even an open link', async () => {
+    const t = new Counting();
+    const p = new LabelPrinter(t);
+    await p.connect();
+    await p.reopen();
+    expect(t.log).toEqual(['disconnect', 'connect', 'disconnect', 'connect']);
+  });
+
+  it('release() closes the link after the job that is running, not in the middle of it', async () => {
+    const t = new Counting();
+    let finish: () => void = () => undefined;
+    t.write = async (data: Uint8Array) => {
+      t.written.push(data);
+      await new Promise<void>((resolve) => { finish = resolve; });
+    };
+    const p = new LabelPrinter(t);
+    const printing = p.print('~JC');
+    await new Promise((r) => setTimeout(r, 5));
+    const released = p.release();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(t.connected).toBe(true); // the job is still sending
+    finish();
+    await printing;
+    await released;
+    expect(t.connected).toBe(false);
+  });
+});

@@ -38,7 +38,15 @@ class HybridClassicConnection(private val socket: BluetoothSocket) : HybridClass
       while (true) {
         val n = input.read(piece)
         if (n < 0) break
-        synchronized(inbox) { inbox.write(piece, 0, n) }
+        synchronized(inbox) {
+          inbox.write(piece, 0, n)
+          // A printer that talks and a reader that never comes must not fill the memory: keep the newest bytes (as the BLE inbox does).
+          if (inbox.size() > INBOX_LIMIT) {
+            val all = inbox.toByteArray()
+            inbox.reset()
+            inbox.write(all, all.size - INBOX_LIMIT, INBOX_LIMIT)
+          }
+        }
       }
     } catch (_: java.io.IOException) {
     }
@@ -123,6 +131,7 @@ class HybridClassicConnection(private val socket: BluetoothSocket) : HybridClass
   companion object {
     /** The words TypeScript maps to E_DISCONNECTED with nothing sent (`bluetoothClassic.ts`): change both together. */
     const val PEER_CLOSED_MESSAGE = "The printer had closed the connection before this write (nothing was sent)"
+    private const val INBOX_LIMIT = 64 * 1024
     private const val CHUNK = 1024
     private const val POLL_MS = 10L
   }

@@ -57,6 +57,8 @@ export interface StatusOptions {
 /** Sends labels (BPLZ, BPLC or BPLA) to a printer through a Transport. */
 export class LabelPrinter {
   private queue: Promise<unknown> = Promise.resolve();
+  /** Jobs that run or wait in the queue (see `busy`). */
+  private pending = 0;
 
   private readonly reconnect: ResolvedReconnect;
   private readonly onEvent: (event: ConnectionEvent) => void;
@@ -197,9 +199,12 @@ export class LabelPrinter {
    * query) could mix their bytes on a link that writes in several pieces, like BLE.
    */
   private exclusive<T>(job: () => Promise<T>): Promise<T> {
+    this.pending++;
     const run = this.queue.then(job, job);
     this.queue = run.catch(() => undefined);
-    return run;
+    return run.finally(() => {
+      this.pending--;
+    });
   }
 
   /** Tell the transport that the job is done (a TCP link closes its connection). Never fails the job that was sent. */
@@ -207,9 +212,32 @@ export class LabelPrinter {
     await this.transport.endJob?.().catch(() => undefined);
   }
 
-  /** Open the link now, with retry. Optional: print() and the queries connect by themselves. */
+  /**
+   * Open the link now, with retry, unless it is open already. Optional: print() and the queries connect by themselves.
+   * An open link is left alone: a status check that closed and opened it again (as this method did before 0.4.3) dropped the data of a
+   * job that was still draining (a close drops what is not sent: Linux `rfcomm_sock_destruct`), freed the printer's one connection for another
+   * phone at every check, and paid a full connect each time.
+   */
   connect(): Promise<void> {
+    return this.exclusive(() => this.ensureConnected());
+  }
+
+  /** A job is running or waiting. A status check can skip a printer that is busy (it would open a second connection to a printer that takes one). */
+  get busy(): boolean {
+    return this.pending > 0;
+  }
+
+  /** Close the link and open it again, even when it is open (for a link that looks open and is not). */
+  reopen(): Promise<void> {
     return this.exclusive(() => this.open());
+  }
+
+  /**
+   * Close the link when the printer has nothing to do: after the job that is running, and after the jobs that wait. A printer that takes one
+   * connection is free for another phone then. `disconnect()` closes at once, in the middle of a job; this does not. The next job connects again.
+   */
+  release(): Promise<void> {
+    return this.exclusive(() => this.transport.disconnect());
   }
 
   disconnect(): Promise<void> {

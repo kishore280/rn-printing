@@ -179,3 +179,15 @@ describe('Bluetooth Classic: a link that the printer closed', () => {
     }
   });
 });
+
+describe('Bluetooth Classic: a printer that was unpaired', () => {
+  afterEach(() => setClassicBluetooth(undefined));
+
+  it('is E_DEVICE_NOT_FOUND, which the person fixes and the retry layer does not repeat', async () => {
+    setClassicBluetooth({
+      connect: async () => { throw new Error("The printer is not paired with this phone any more. Pair it again in the phone's Bluetooth settings"); },
+    } as unknown as ClassicBluetooth);
+    const error = await new BluetoothClassicTransport('AA:BB:CC:DD:EE:FF').connect().catch((e: TransportError) => e);
+    expect(error).toMatchObject({ code: 'E_DEVICE_NOT_FOUND' });
+  });
+});

@@ -286,5 +286,17 @@ An independent reviewer read the Classic (SPP) code and the BLE scan, connect an
 12. **BLE: a disconnect right after a write without response reads the Device Name (0x2A00) first.** A request that the printer answers is ordered after the commands before it on the channel, so its answer says that the queued data was sent. The window is 2 s after the last such write; a failed read does not fail the disconnect. Test: `bluetoothLE-review.test.ts`. This is the Linux idea (drain before the close), made with the protocol's own ordering. NOT run on a printer: a printer whose Device Name needs pairing would answer with an authentication error (the answer is ignored).
 
 **Still open:**
-- Android 12 and older, one characteristic for write and notify: the stack sets `characteristic.value` for a notification before it calls us, and our write sets the same field. No lock of ours can order those two. Newer Android passes the value as an argument.
-- `requestEnable`'s activity listener stays registered if the activity is destroyed before the result (low impact).
+- Android 12 and older, one characteristic for write and notify. Read in `BluetoothGatt.java` (Android 12): `onNotify` does `characteristic.setValue(value)` and then `onCharacteristicChanged` one after the other in one Runnable on the callback thread, and `writeCharacteristic` reads `characteristic.getValue()` inside the call. So the notification's payload can be replaced only by a write from another thread in the few microseconds between the two lines, and no lock of ours can order a `setValue` that the stack does. The fix is the API of Android 13 (the value is an argument). Not fixed here, and the window is as small as it can be.
+
+**Closed after that** (0.4.3): `requestEnable`'s activity listener is removed after 120 s if the activity was destroyed with the dialog open (Kotlin, compiled only).
+
+## 14. Round 9: the audit of the app's Classic and network logic (2026-10-10, 0.4.3)
+
+An independent reader traced each user step of the app through this package. Found and fixed here:
+
+1. **`LabelPrinter.connect()` closed an open link and opened it again** (reproduced with the compiled package). `connect()` called `open()`, which starts with `transport.disconnect()`. The app calls `connect()` for every status poll and every print check, so each of them dropped the link: the data of a job that was still draining (a close drops what is not sent: Linux `rfcomm_sock_destruct` purges the write queue), the printer's one connection (free for another phone at each check), and a full connect each time. It is the same for BLE. `connect()` now leaves an open link alone (`ensureConnected`). `reopen()` is the forced close and open. Tests: `printer.test.ts`.
+2. **`release()`** closes the link after the running job and the waiting jobs (the queue), not in the middle of one. The app calls it when it goes to the background, so a printer that takes one connection is free for another phone. **`busy`** says that a job runs or waits, so a status check can skip a printer that is busy (it would open a second connection).
+3. **Classic: a printer that was unpaired** in the phone settings was still dialled: the secure socket starts a pairing dialog in the middle of a print or a check. It is refused first (`E_DEVICE_NOT_FOUND`: the person pairs it again; not retried). Kotlin, compiled only.
+4. **Classic: the inbox has a limit** (64 KiB, the newest bytes), as BLE has.
+
+Not fixed here: a Classic write cannot say how many bytes went out (Android's `BluetoothSocket.write` gives no count), so a job is "sent" when the bytes reached the phone's Bluetooth stack. A power-off in that moment is learned at the next check (the reader thread sees the close).

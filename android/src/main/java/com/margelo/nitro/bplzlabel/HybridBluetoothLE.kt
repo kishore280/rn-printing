@@ -102,9 +102,11 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       ?: return Promise.rejected(BleError("E_BLUETOOTH_OFF", "Bluetooth is off, and there is no screen to ask on"))
 
     val promise = Promise<Boolean>()
+    val answered = java.util.concurrent.atomic.AtomicBoolean(false)
     val listener = object : BaseActivityEventListener() {
       override fun onActivityResult(a: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode != REQUEST_ENABLE) return
+        answered.set(true)
         context.removeActivityEventListener(this)
         if (resultCode != Activity.RESULT_OK) {
           promise.resolve(false) // the user said no
@@ -119,6 +121,14 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
       try {
         context.addActivityEventListener(listener)
         activity.startActivityForResult(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE), REQUEST_ENABLE)
+        // The screen can be destroyed while the dialog is open (a rotation, the system closing the activity): no result then comes, and the
+        // listener would stay registered for the life of the process. After a long time it is removed and the answer is "no".
+        main.postDelayed({
+          if (answered.compareAndSet(false, true)) {
+            context.removeActivityEventListener(listener)
+            promise.resolve(false)
+          }
+        }, ENABLE_ASK_MS)
       } catch (e: Exception) {
         context.removeActivityEventListener(listener)
         promise.reject(BleError("E_BLUETOOTH_OFF", "Bluetooth is off, and the phone could not ask: ${e.message}"))
@@ -390,6 +400,9 @@ class HybridBluetoothLE : HybridBluetoothLESpec() {
     /** Request code of the "turn on Bluetooth" dialog. */
     private const val REQUEST_ENABLE = 7421
     private const val ENABLE_WAIT_MS = 5000L
+
+    /** How long the "turn Bluetooth on" dialog may stay open before the app stops waiting for its answer. Our choice. */
+    private const val ENABLE_ASK_MS = 120_000L
     private const val ENABLE_POLL_MS = 100L
 
     /** Nordic waits 200 ms between closing a GATT client and the next connectGatt to the same device. */
