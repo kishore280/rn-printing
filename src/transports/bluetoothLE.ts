@@ -29,6 +29,9 @@ export { classify } from './bleCommon';
 export { BleDeviceConnection, BluetoothLE, bleFilters } from './bleScan';
 
 
+/** The native side has its own time limit; this guard is for a native promise that never settles. */
+const GUARD_MARGIN_MS = 1000;
+const DEFAULT_BOND_TIMEOUT_MS = 30000;
 const LOWEST_PAYLOAD = 20; // the smallest BLE packet: MTU 23 minus 3
 
 /**
@@ -336,7 +339,8 @@ export class BluetoothLETransport implements Transport {
       throw error;
     }
     this.lastWriteStats = stats();
-    if (gen === this.generation) this.setState('connected');
+    // The link may be lost during the last piece: do not say 'connected' for a link that is gone.
+    if (gen === this.generation && this.link === link) this.setState('connected');
   }
 
   /**
@@ -354,7 +358,7 @@ export class BluetoothLETransport implements Transport {
       // The phone may already hold a bond the printer has forgotten. Android then reports BONDED but the link stays
       // unencrypted (Nordic's BleManagerHandler documents this), and iOS reports peerRemovedPairingInformation.
       const hadBond = link.bondState === 'bonded';
-      const bonded = await wrap(link.bond(this.settings.bondTimeoutMs ?? 30000), 'E_AUTH');
+      const bonded = await wrap(link.bond(this.settings.bondTimeoutMs ?? DEFAULT_BOND_TIMEOUT_MS), 'E_AUTH');
       if (!bonded) throw new TransportError('The device was not paired. Accept the pairing request on the phone, then try again.', 'E_AUTH');
       // Some devices close the link after pairing. The caller connects again; the device is paired now.
       if (!link.isConnected) throw new TransportError('The link closed after pairing. Connect again.', 'E_DISCONNECTED');
@@ -393,24 +397,18 @@ export class BluetoothLETransport implements Transport {
     offset: number,
     total: number
   ): Promise<void> {
-    // The native side has its own timeout. This one is a guard in case a native promise never settles.
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const guard = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new TransportError(`Write timed out after ${timeoutMs} ms (${offset} of ${total} bytes sent)`, 'E_TIMEOUT')),
-        timeoutMs + 1000
+    const attempt = () =>
+      withGuard(
+        wrap(link.write(pick.write.serviceUuid, pick.write.uuid, toArrayBuffer(piece), pick.withResponse, timeoutMs), 'E_WRITE'),
+        timeoutMs + GUARD_MARGIN_MS,
+        `Write timed out after ${timeoutMs} ms`
       );
-    });
     try {
-      await Promise.race([
-        this.withBond(link, () => wrap(link.write(pick.write.serviceUuid, pick.write.uuid, toArrayBuffer(piece), pick.withResponse, timeoutMs), 'E_WRITE')),
-        guard,
-      ]);
+      // The guard covers each native write, not the pairing in between: a pairing has its own time limit (`bondTimeoutMs`).
+      await this.withBond(link, attempt);
     } catch (e) {
       const error = classify(e, 'E_WRITE');
       throw new TransportError(`${error.message} (${offset} of ${total} bytes sent)`, error.code);
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   }
 
@@ -442,4 +440,17 @@ async function readCharacteristic(link: BleConnection, c: BleGattCharacteristic)
     row.error = { code: error.code ?? 'E_READ', message: error.message };
   }
   return row;
+}
+
+/** `promise`, or an E_TIMEOUT when it does not settle in `ms`. */
+async function withGuard<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new TransportError(message, 'E_TIMEOUT')), ms);
+  });
+  try {
+    return await Promise.race([promise, guard]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
