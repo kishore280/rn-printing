@@ -41,6 +41,8 @@ function classify(message: string, fallback: string): string {
   if (/BLUETOOTH_CONNECT permission/i.test(message)) return 'E_PERMISSION';
   if (/Bluetooth is off/i.test(message)) return 'E_BLUETOOTH_OFF';
   if (PEER_CLOSED.test(message)) return 'E_DISCONNECTED';
+  // Unpaired in the phone settings: the person pairs it again (never retried).
+  if (/not paired with this phone/i.test(message)) return 'E_DEVICE_NOT_FOUND';
   if (/Bad Bluetooth address/i.test(message)) return 'E_BAD_ADDRESS';
   if (/no Bluetooth adapter/i.test(message)) return 'E_NO_ADAPTER';
   return fallback;
