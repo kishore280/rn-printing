@@ -25,6 +25,9 @@ export interface WriteOptions {
 /** Life cycle of a link: `connecting` > `connected` > `writing` > `connected` ... > `disconnecting` > `disconnected`. */
 export type LinkState = 'connecting' | 'connected' | 'writing' | 'disconnecting' | 'disconnected';
 
+/** The reason of a `disconnected` event when a transport closed the link because the job is done, as it does on purpose after each job (TCP). It is not a loss and not a request of the caller. */
+export const JOB_DONE = 'job done';
+
 /** One change of the link. A lost link, a failed write and a failed connect end in `disconnected`, with the reason. */
 export interface LinkEvent {
   state: LinkState;

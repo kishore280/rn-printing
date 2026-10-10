@@ -12,6 +12,7 @@ import { settle, settleDelay, observe, HEALTH_START, type Evidence, type HealthS
 import { zplSettings } from './zpl';
 import { ExtendedStatus, parseExtendedStatus, parseHostIdentification, parseHostStatus, PrinterIdentity, PrinterStatus } from './status';
 import { TransportError } from './errors';
+import { JOB_DONE } from './transport';
 import type { LinkEvent, LinkState, Transport, WriteOptions } from './transport';
 import type { BleGattReading, BluetoothLETransport } from './transports/bluetoothLE';
 
@@ -82,6 +83,8 @@ export class LabelPrinter {
       transport.onConnectionState?.((e) => {
         if (e.state === 'connected') this.feed({ kind: 'alive' });
         else if (e.state === 'disconnected') {
+          // A close after a finished job says nothing about the link: the health stays as the last job left it.
+          if (e.reason === JOB_DONE) return;
           if (e.reason === 'requested') this.feed({ kind: 'closed' });
           else this.feed({ kind: e.error ? 'failed' : 'down' });
         }

@@ -154,7 +154,7 @@ describe('TcpTransport: link events', () => {
   it('connecting, connected, writing, connected, then closed on purpose at endJob', async () => {
     const seen = await events(async (t) => { await t.connect(); await t.write(Uint8Array.of(1)); await t.endJob(); });
     expect(seen.map((e) => e.state)).toEqual(['connecting', 'connected', 'writing', 'connected', 'disconnected']);
-    expect(seen[4]).toMatchObject({ state: 'disconnected', reason: 'requested' });
+    expect(seen[4]).toMatchObject({ state: 'disconnected', reason: 'job done' });
   });
 
   it('a close from the printer while the link is open is a lost link', async () => {
@@ -221,5 +221,96 @@ describe('LabelPrinter over TcpTransport', () => {
     await expect(lp.printRaw(Uint8Array.of(1))).resolves.toBeUndefined();
     expect(sockets[0]!.sent).toEqual([[1]]);
     await lp.dispose();
+  });
+});
+
+describe('TcpTransport: found by an independent review', () => {
+  it('an abandoned connect cannot destroy the next, healthy connection', async () => {
+    jest.useFakeTimers();
+    try {
+      const sockets: ReturnType<typeof fakeSocket>[] = [];
+      let connects = 0;
+      const t = new TcpTransport({
+        host: 'h',
+        connectTimeoutMs: 5000,
+        createConnection: (_o, onConnect) => {
+          const f = fakeSocket();
+          sockets.push(f);
+          // The first connect never answers; the second one does at once.
+          if (++connects > 1) setTimeout(onConnect, 0);
+          return f.socket;
+        },
+      });
+      const first = t.connect();
+      const firstResult = first.then(() => 'connected', (e: { code?: string }) => e.code);
+      await t.disconnect();
+      expect(await firstResult).toBe('E_CANCELLED');
+      const second = t.connect();
+      await jest.advanceTimersByTimeAsync(10);
+      await second;
+      await jest.advanceTimersByTimeAsync(6000); // the first connect's timer would fire now
+      expect(await t.isConnected()).toBe(true);
+      expect(sockets[1]!.log).not.toContain('destroy');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a second connect() ends the first one that still waits', async () => {
+    let connects = 0;
+    const t = new TcpTransport({
+      host: 'h',
+      createConnection: (_o, onConnect) => {
+        const f = fakeSocket();
+        if (++connects > 1) setTimeout(onConnect, 0);
+        return f.socket;
+      },
+    });
+    const first = t.connect().then(() => 'connected', (e: { code?: string }) => e.code);
+    await t.connect();
+    expect(await first).toBe('E_CANCELLED');
+  });
+
+  it('the printer closes the connection under a write: the write fails at once, not after the write timeout', async () => {
+    const { t, sockets } = transportOf({ writeTimeoutMs: 60_000 }, { hangWrites: true });
+    const events: LinkEvent[] = [];
+    t.onConnectionState((e) => events.push(e));
+    await t.connect();
+    const writing = t.write(Uint8Array.of(1, 2, 3)).then(() => null, (e: { code?: string; nothingSent?: boolean }) => e);
+    await new Promise((r) => setTimeout(r, 5));
+    sockets[0]!.emit('close', false);
+    const error = await writing;
+    expect(error).toMatchObject({ code: 'E_WRITE', nothingSent: false });
+    // The loss is told with its error, so the link health counts a hard failure.
+    expect(events.at(-1)).toMatchObject({ state: 'disconnected', error: expect.any(Error) });
+  });
+
+  it('an error of the socket under a write fails the write with E_WRITE', async () => {
+    const { t, sockets } = transportOf({ writeTimeoutMs: 60_000 }, { hangWrites: true });
+    await t.connect();
+    const writing = t.write(Uint8Array.of(1)).then(() => null, (e: { code?: string }) => e);
+    await new Promise((r) => setTimeout(r, 5));
+    sockets[0]!.emit('error', new Error('ECONNRESET'));
+    expect(await writing).toMatchObject({ code: 'E_WRITE' });
+  });
+
+  it('after a good job the link health is kept, so a printer that then stops answering turns it to lost', async () => {
+    let up = true;
+    const t = new TcpTransport({
+      host: 'h',
+      createConnection: (_o, onConnect) => {
+        const f = fakeSocket();
+        if (up) setTimeout(onConnect, 0);
+        else setTimeout(() => f.emit('error', new Error('EHOSTUNREACH')), 0);
+        return f.socket;
+      },
+    });
+    const printer = new LabelPrinter(t, { reconnect: { maxAttempts: 1 } });
+    await printer.printRaw(Uint8Array.of(1));
+    expect(printer.health).toBe('up'); // the close after the job does not reset it
+    up = false;
+    await expect(printer.printRaw(Uint8Array.of(2))).rejects.toBeDefined();
+    await expect(printer.printRaw(Uint8Array.of(3))).rejects.toBeDefined();
+    expect(printer.health).toBe('lost');
   });
 });
