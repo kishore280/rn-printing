@@ -19,6 +19,9 @@ export interface BluetoothClassicOptions {
   writeTimeoutMs?: number | undefined;
 }
 
+/** HybridClassicConnection.kt (`PEER_CLOSED_MESSAGE`): the printer closed the connection and no byte of this write went out. */
+const PEER_CLOSED = /had closed the connection before this write/i;
+
 function native(): ClassicBluetooth {
   const mod = Platform.OS === 'android' ? getClassicBluetooth() : null;
   if (!mod) {
@@ -37,6 +40,7 @@ function native(): ClassicBluetooth {
 function classify(message: string, fallback: string): string {
   if (/BLUETOOTH_CONNECT permission/i.test(message)) return 'E_PERMISSION';
   if (/Bluetooth is off/i.test(message)) return 'E_BLUETOOTH_OFF';
+  if (PEER_CLOSED.test(message)) return 'E_DISCONNECTED';
   if (/Bad Bluetooth address/i.test(message)) return 'E_BAD_ADDRESS';
   if (/no Bluetooth adapter/i.test(message)) return 'E_NO_ADAPTER';
   return fallback;
@@ -57,12 +61,15 @@ export const BluetoothClassic = {
     return Platform.OS === 'android' && getClassicBluetooth() !== null;
   },
 
-  /** Ask for the Android 12+ BLUETOOTH_CONNECT permission. Returns true when granted. */
+  /**
+   * Ask for the Android 12+ permissions in one dialog (both are in the "Nearby devices" group). Returns true when BLUETOOTH_CONNECT is granted.
+   * BLUETOOTH_SCAN is asked too, because `cancelDiscovery()` needs it: without it a discovery that another app started stays on and slows the connect.
+   */
   async requestPermissions(): Promise<boolean> {
     if (Platform.OS !== 'android') return false;
     if (typeof Platform.Version === 'number' && Platform.Version < 31) return true;
-    const result = await PermissionsAndroid.request('android.permission.BLUETOOTH_CONNECT');
-    return result === PermissionsAndroid.RESULTS.GRANTED;
+    const result = await PermissionsAndroid.requestMultiple(['android.permission.BLUETOOTH_CONNECT', 'android.permission.BLUETOOTH_SCAN']);
+    return result['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED;
   },
 
   isEnabled(): boolean {
@@ -89,12 +96,23 @@ export class BluetoothClassicTransport implements Transport {
     private readonly options: BluetoothClassicOptions = {}
   ) {}
 
+  /** Counts connects and disconnects: a connect that finishes after a `disconnect()` must close its socket (BLE does the same). */
+  private generation = 0;
+
   async connect(): Promise<void> {
     await this.disconnect();
-    this.connection = await wrap(native().connect(this.address, !!this.options.preferInsecure), 'E_CONNECT');
+    const gen = this.generation;
+    const connection = await wrap(native().connect(this.address, !!this.options.preferInsecure), 'E_CONNECT');
+    if (gen !== this.generation) {
+      // `disconnect()` (or `dispose()`) came while the socket opened. A printer that takes one connection must not stay held.
+      await wrap(connection.close()).catch(() => undefined);
+      throw new TransportError('The connection was closed while it opened', 'E_CANCELLED');
+    }
+    this.connection = connection;
   }
 
   async disconnect(): Promise<void> {
+    this.generation++;
     const c = this.connection;
     this.connection = null;
     if (c) await wrap(c.close());
@@ -113,7 +131,10 @@ export class BluetoothClassicTransport implements Transport {
     const budget = limit > 0 ? limit + (pieces - 1) * delay + pieces * limit : 0;
     const job = wrap(c.write(toArrayBuffer(data), delay), 'E_WRITE');
     if (budget === 0) {
-      await job;
+      await job.catch((e: unknown) => {
+        if (e instanceof TransportError && PEER_CLOSED.test(e.message)) e.nothingSent = true;
+        throw e;
+      });
       return;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -122,6 +143,10 @@ export class BluetoothClassicTransport implements Transport {
     });
     try {
       await Promise.race([job, timeout]);
+    } catch (e) {
+      // The link was already closed by the printer: nothing was sent, so `LabelPrinter` may open a new link and send the job again.
+      if (e instanceof TransportError && PEER_CLOSED.test(e.message)) e.nothingSent = true;
+      throw e;
     } finally {
       if (timer) clearTimeout(timer);
     }

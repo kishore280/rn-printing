@@ -69,11 +69,30 @@ class HybridClassicBluetooth : HybridClassicBluetoothSpec() {
     ).let { if (preferInsecure) listOf(it[1], it[0], it[2]) else it }
 
     var lastError: Exception? = null
+    // One time budget for all tries: a printer that is off must not keep the phone waiting for three blocking connects.
+    // `BluetoothSocket.close()` from another thread aborts a connect that blocks (the Android documentation says so).
+    val deadline = System.currentTimeMillis() + CONNECT_BUDGET_MS
     for (create in attempts) {
+      val left = deadline - System.currentTimeMillis()
+      if (left <= 0) {
+        lastError = lastError ?: java.io.IOException("timed out after $CONNECT_BUDGET_MS ms")
+        break
+      }
       var socket: BluetoothSocket? = null
+      val watchdog = java.util.Timer("bplz-classic-connect", true)
       try {
         socket = create()
+        val opening = socket
+        watchdog.schedule(object : java.util.TimerTask() {
+          override fun run() {
+            try {
+              opening.close()
+            } catch (_: Exception) {
+            }
+          }
+        }, left)
         socket.connect()
+        watchdog.cancel()
         return socket
       } catch (e: Exception) {
         lastError = e
@@ -81,6 +100,10 @@ class HybridClassicBluetooth : HybridClassicBluetoothSpec() {
           socket?.close()
         } catch (_: Exception) {
         }
+        // The permission was taken away while the app runs: no other try can work, and the person must fix it (E_PERMISSION, not retried).
+        if (e is SecurityException) throw Error("The BLUETOOTH_CONNECT permission is not granted (it was taken away during the connection)")
+      } finally {
+        watchdog.cancel()
       }
     }
     throw Error("Cannot connect to ${device.address}: ${lastError?.message}")
@@ -93,5 +116,8 @@ class HybridClassicBluetooth : HybridClassicBluetoothSpec() {
 
   companion object {
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+    /** All tries of one connect() together. Our choice, not measured: long enough for a slow printer, short enough to give an answer. */
+    private const val CONNECT_BUDGET_MS = 20_000L
   }
 }

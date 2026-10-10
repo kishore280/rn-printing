@@ -1,6 +1,6 @@
 {
   "name": "react-native-bplz-label-printer",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Print ZPL (BPLZ) labels from React Native. Bluetooth Classic (SPP) on Android, TCP on Android and iOS. Built for SNBC-made label printers such as the TVS LP 46 Dlite.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

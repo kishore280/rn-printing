@@ -101,6 +101,7 @@ class HybridBleConnection(
       device.connectGatt(context, false, callback)
     }
     if (g == null) {
+      stopWatchingPairing() // closeGatt returns early without a GATT object, so the receiver would stay registered
       settleConnect(BleError("E_CONNECT", "Android could not start the connection to ${device.address}"))
       return
     }
@@ -270,6 +271,8 @@ class HybridBleConnection(
     retryRefusal: Boolean = true,
     waitForCallback: Boolean = true,
     probe: Boolean = false,
+    /** How long to wait for the callback of an accepted start. A refused start is tried again for `timeoutMs`, as before. */
+    callbackWaitMs: Long = timeoutMs,
     kind: GattOpGuard.Kind = GattOpGuard.Kind.WRITE,
     start: () -> Boolean,
   ): Int {
@@ -295,7 +298,7 @@ class HybridBleConnection(
         try {
           if (start()) {
             accepted = true
-            val status = awaitStatus(op, deadline)
+            val status = awaitStatus(op, minOf(deadline, System.currentTimeMillis() + callbackWaitMs))
             if (status == null) {
               // Give up this operation BEFORE anything else runs. Its callback may still come. The guard drops it.
               if (probe) guard.abandonTentative(op) else guard.abandon(op, accepted = true)
@@ -515,7 +518,7 @@ class HybridBleConnection(
       } else {
         // First write without response: find out whether Android calls back.
         try {
-          runOp("write", minOf(limit, PROBE_MS), retryRefusal = true, probe = true, start = start).also { noResponseCallbackSeen = true }
+          runOp("write", limit, retryRefusal = true, probe = true, callbackWaitMs = PROBE_MS, start = start).also { noResponseCallbackSeen = true }
         } catch (e: BleError) {
           if (e.code != "E_TIMEOUT") throw e
           noResponseCallbackSeen = false // accepted by Android, no callback: this phone does not call back
