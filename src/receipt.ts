@@ -19,6 +19,7 @@ import type { Bitmap1bpp } from './bitmap';
 import type { ReceiptDesign, ReceiptIssue, ReceiptLine } from './receiptTypes';
 
 export { RECEIPT_CODEPAGES, ensureStructuredClone, isPrintable } from './receiptText';
+export { tableColumnWidths } from './receiptLayout';
 export { RECEIPT_MAX_COLUMNS, RECEIPT_MIN_COLUMNS } from './receiptTypes';
 export type * from './receiptTypes';
 

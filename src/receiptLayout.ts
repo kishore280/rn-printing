@@ -126,6 +126,12 @@ function tableWidths(cols: TableColumns, width: number, page: Page): number[] {
   return widths;
 }
 
+/** The column widths of a table on a paper `width` characters wide, with no warnings: for a caller that draws the table itself. */
+export function tableColumnWidths(cols: TableColumns, width: number): number[] {
+  const quiet: Page = { width, dots: 0, cutter: false, push: () => undefined, warn: () => undefined };
+  return tableWidths(cols, width, quiet);
+}
+
 /** One table row as printed lines: every cell wrapped to its column, the cells side by side. */
 function tableRow(cells: unknown[], widths: number[], cols: TableColumns, bold: boolean): ReceiptLine[] {
   const wrapped = widths.map((w, i) => wrapLines(str(cells[i]), w));

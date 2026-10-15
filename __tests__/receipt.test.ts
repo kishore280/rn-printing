@@ -1,5 +1,5 @@
 import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
-import { RECEIPT_CODEPAGES, checkReceipt, cutBytes, ensureStructuredClone, isPrintable, layoutReceipt, receiptToBytes } from '../src/receipt';
+import { RECEIPT_CODEPAGES, checkReceipt, cutBytes, ensureStructuredClone, isPrintable, layoutReceipt, receiptToBytes, tableColumnWidths } from '../src/receipt';
 import type { ReceiptBlock, ReceiptDesign, ReceiptLine } from '../src/receipt';
 
 const paper = (columns = 32, cutter = true) => ({ columns, dotsWidth: 384, cutter });
@@ -443,5 +443,23 @@ describe('image block', () => {
 
   it('does not warn for a picture that fits', () => {
     expect(checkReceipt(withImage(bitmap(384)))).toEqual([]);
+  });
+});
+
+describe('tableColumnWidths', () => {
+  const cols: Extract<ReceiptBlock, { kind: 'table' }>['columns'] = [
+    { width: 'auto', align: 'left' },
+    { width: 3, align: 'right' },
+    { width: 5, align: 'right' },
+  ];
+  it('gives the auto column what the fixed columns and the one-space gaps leave', () => {
+    expect(tableColumnWidths(cols, 32)).toEqual([22, 3, 5]);
+    expect(tableColumnWidths(cols, 48)).toEqual([38, 3, 5]);
+  });
+  it('are the widths layoutReceipt prints the table with', () => {
+    const lines = layoutReceipt(design([{ kind: 'table', columns: cols, rows: [['Rice', '2', '90.00']] }]));
+    const text = (lines[0] as { text: string }).text;
+    const [name, qty, amount] = tableColumnWidths(cols, 32);
+    expect(text).toBe('Rice'.padEnd(name ?? 0) + ' ' + '2'.padStart(qty ?? 0) + ' ' + '90.00'.padStart(amount ?? 0));
   });
 });
