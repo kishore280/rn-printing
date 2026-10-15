@@ -1,4 +1,6 @@
 /** Types of the receipt module: the design the caller fills, the lines as they print, the issues. */
+import type { Bitmap1bpp } from './bitmap';
+
 export type ReceiptAlign = 'left' | 'center' | 'right';
 
 /** `columns`: characters of the normal font, 16 to 48. `dotsWidth`: print width in dots, 192 to 832. */
@@ -22,6 +24,8 @@ export type ReceiptBlock =
     }
   | { kind: 'qr'; data: string; cell?: number; align?: ReceiptAlign }
   | { kind: 'barcode'; data: string; height?: number; showText?: boolean; align?: ReceiptAlign }
+  /** A picture, one dot per bit: text the printer's code pages cannot print (Tamil) is drawn by the caller and sent as one. */
+  | { kind: 'image'; bitmap: Bitmap1bpp; align?: ReceiptAlign }
   | { kind: 'cut'; mode?: 'partial' | 'full' };
 
 export interface ReceiptDesign {
@@ -33,6 +37,7 @@ export type ReceiptLine =
   | { kind: 'text'; text: string; bold: boolean; size: 1 | 2 }
   | { kind: 'qr'; data: string; cell: number; align: ReceiptAlign }
   | { kind: 'barcode'; data: string; height: number; showText: boolean; align: ReceiptAlign }
+  | { kind: 'image'; bitmap: Bitmap1bpp; align: ReceiptAlign }
   | { kind: 'cut'; mode: 'partial' | 'full'; fed: boolean };
 
 export interface ReceiptIssue {

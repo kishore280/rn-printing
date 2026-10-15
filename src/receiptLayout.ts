@@ -16,6 +16,8 @@ import { RECEIPT_MAX_COLUMNS, RECEIPT_MIN_COLUMNS } from './receiptTypes';
 import type { ReceiptAlign, ReceiptBlock, ReceiptDesign, ReceiptIssue, ReceiptLine } from './receiptTypes';
 
 const EMPTY_CELLS_AUTO_MIN = 4;
+/** The print width of a paper whose own `dotsWidth` is not usable: 58 mm at 203 dpi. */
+const DEFAULT_DOTS = 384;
 
 interface Laid {
   line: ReceiptLine;
@@ -30,6 +32,8 @@ export interface Built {
 /** What one block needs while it is laid out: the paper, where to put lines, where to put warnings. */
 interface Page {
   width: number;
+  /** The print width in dots. */
+  dots: number;
   cutter: boolean;
   push(...lines: ReceiptLine[]): void;
   warn(code: ReceiptIssue['code'], message: string): void;
@@ -120,6 +124,12 @@ function tableWidths(cols: TableColumns, width: number, page: Page): number[] {
   }
   shrinkToFit(widths, width - gaps);
   return widths;
+}
+
+/** The column widths of a table on a paper `width` characters wide, with no warnings: for a caller that draws the table itself. */
+export function tableColumnWidths(cols: TableColumns, width: number): number[] {
+  const quiet: Page = { width, dots: 0, cutter: false, push: () => undefined, warn: () => undefined };
+  return tableWidths(cols, width, quiet);
 }
 
 /** One table row as printed lines: every cell wrapped to its column, the cells side by side. */
@@ -227,6 +237,20 @@ function layoutBarcode(block: Extract<ReceiptBlock, { kind: 'barcode' }>, page: 
   });
 }
 
+/** A picture is as wide as it is: the caller draws it for the paper (`dotsWidth`). One that does not fit is cut by the printer, so it warns. */
+function layoutImage(block: Extract<ReceiptBlock, { kind: 'image' }>, page: Page): void {
+  const b = block.bitmap;
+  const sound =
+    b !== null && typeof b === 'object' && inRange(b.width, 1, 4096) && inRange(b.height, 1, 4096) && inRange(b.bytesPerRow, 1, 512) &&
+    b.bytesPerRow * 8 >= b.width && b.data instanceof Uint8Array && b.data.length === b.bytesPerRow * b.height;
+  if (!sound) {
+    page.warn('bad_value', 'The image is not a 1-bit bitmap (width, height, bytesPerRow and data that agree).');
+    return;
+  }
+  if (b.width > page.dots) page.warn('too_wide', `The image is ${b.width} dots wide and the paper prints ${page.dots}: the printer cuts the rest.`);
+  page.push({ kind: 'image', bitmap: b, align: alignOf(block.align, 'left') });
+}
+
 function layoutCut(block: Extract<ReceiptBlock, { kind: 'cut' }>, page: Page): void {
   page.push({ kind: 'cut', mode: block.mode === 'full' ? 'full' : 'partial', fed: !page.cutter });
 }
@@ -240,6 +264,7 @@ function layoutBlock(block: ReceiptBlock, page: Page): void {
     case 'table': return layoutTable(block, page);
     case 'qr': return layoutQr(block, page);
     case 'barcode': return layoutBarcode(block, page);
+    case 'image': return layoutImage(block, page);
     case 'cut': return layoutCut(block, page);
     default:
       page.warn('bad_value', `Unknown block kind "${str((block as { kind?: unknown }).kind)}".`);
@@ -268,12 +293,14 @@ export function buildReceipt(design: ReceiptDesign): Built {
   const width = paperColumns(design);
   const issues = paperIssues(design, width);
   const cutter = design?.paper?.cutter === true;
+  const dots = inRange(design?.paper?.dotsWidth, 192, 832) ? design.paper.dotsWidth : DEFAULT_DOTS;
   const blocks = Array.isArray(design?.blocks) ? design.blocks : [];
 
   blocks.forEach((raw, blockIndex) => {
     const block = raw as ReceiptBlock | null;
     const page: Page = {
       width,
+      dots,
       cutter,
       push: (...ls) => {
         for (const line of ls) lines.push({ line, blockIndex });

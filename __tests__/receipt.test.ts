@@ -1,5 +1,5 @@
 import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
-import { checkReceipt, cutBytes, ensureStructuredClone, isPrintable, layoutReceipt, receiptToBytes } from '../src/receipt';
+import { RECEIPT_CODEPAGES, checkReceipt, cutBytes, ensureStructuredClone, isPrintable, layoutReceipt, receiptToBytes, tableColumnWidths } from '../src/receipt';
 import type { ReceiptBlock, ReceiptDesign, ReceiptLine } from '../src/receipt';
 
 const paper = (columns = 32, cutter = true) => ({ columns, dotsWidth: 384, cutter });
@@ -387,5 +387,79 @@ describe('garbage input', () => {
       }).not.toThrow();
     }
     expect(() => layoutReceipt(null as unknown as ReceiptDesign)).not.toThrow();
+  });
+});
+
+describe('image block', () => {
+  /** 16 x 2 dots: the first row 1010 0101 1111 1111, the second row all white. */
+  const bitmap = (width = 16, height = 2): import('../src/bitmap').Bitmap1bpp => {
+    const bytesPerRow = Math.ceil(width / 8);
+    const data = new Uint8Array(bytesPerRow * height);
+    data[0] = 0xa5;
+    if (bytesPerRow > 1) data[1] = 0xff;
+    return { width, height, bytesPerRow, data };
+  };
+  const withImage = (b = bitmap(), alignment?: 'left' | 'center' | 'right') =>
+    design([{ kind: 'text', text: 'before' }, { kind: 'image', bitmap: b, ...(alignment ? { align: alignment } : {}) }, { kind: 'text', text: 'after' }]);
+
+  it('is one line of the layout, left unless told otherwise', () => {
+    const lines = layoutReceipt(withImage());
+    expect(lines.map((l) => l.kind)).toEqual(['text', 'image', 'text']);
+    const image = lines[1];
+    expect(image).toEqual({ kind: 'image', bitmap: bitmap(), align: 'left' });
+    expect((layoutReceipt(withImage(bitmap(), 'center'))[1] as { align: string }).align).toBe('center');
+  });
+
+  it('prints as the encoder prints the same pixels: its own image command, black where the bit is 1', () => {
+    const expected = new ReceiptPrinterEncoder({ language: 'esc-pos', columns: 32, newline: '\n', codepageCandidates: [...RECEIPT_CODEPAGES] });
+    const pixels = new Uint8ClampedArray(16 * 2 * 4).fill(255);
+    for (let x = 0; x < 16; x++) {
+      const on = x < 8 ? (0xa5 >> (7 - x)) & 1 : 1;
+      if (on) pixels.fill(0, x * 4, x * 4 + 3);
+    }
+    expected.initialize().codepage('auto').text('before').newline();
+    expected.align('center').image({ data: pixels, width: 16, height: 2 }, { width: 16, height: 2, algorithm: 'threshold' }).align('left');
+    expected.text('after').newline();
+    expect(hex(receiptToBytes(withImage(bitmap(), 'center')))).toBe(hex(expected.encode()));
+  });
+
+  it('changes the bytes: a different picture is a different receipt', () => {
+    const other = bitmap();
+    other.data[0] = 0x5a;
+    expect(hex(receiptToBytes(withImage(other)))).not.toBe(hex(receiptToBytes(withImage())));
+  });
+
+  it('warns when it is wider than the paper prints, and still prints it', () => {
+    const issues = checkReceipt(withImage(bitmap(400)));
+    expect(issues.map((i) => [i.code, i.blockIndex])).toEqual([['too_wide', 1]]);
+    expect(layoutReceipt(withImage(bitmap(400))).map((l) => l.kind)).toEqual(['text', 'image', 'text']);
+  });
+
+  it('leaves out a bitmap that is not a bitmap, with a warning', () => {
+    const bad = { width: 16, height: 2, bytesPerRow: 2, data: new Uint8Array(3) };
+    expect(checkReceipt(withImage(bad)).map((i) => i.code)).toEqual(['bad_value']);
+    expect(layoutReceipt(withImage(bad)).map((l) => l.kind)).toEqual(['text', 'text']);
+  });
+
+  it('does not warn for a picture that fits', () => {
+    expect(checkReceipt(withImage(bitmap(384)))).toEqual([]);
+  });
+});
+
+describe('tableColumnWidths', () => {
+  const cols: Extract<ReceiptBlock, { kind: 'table' }>['columns'] = [
+    { width: 'auto', align: 'left' },
+    { width: 3, align: 'right' },
+    { width: 5, align: 'right' },
+  ];
+  it('gives the auto column what the fixed columns and the one-space gaps leave', () => {
+    expect(tableColumnWidths(cols, 32)).toEqual([22, 3, 5]);
+    expect(tableColumnWidths(cols, 48)).toEqual([38, 3, 5]);
+  });
+  it('are the widths layoutReceipt prints the table with', () => {
+    const lines = layoutReceipt(design([{ kind: 'table', columns: cols, rows: [['Rice', '2', '90.00']] }]));
+    const text = (lines[0] as { text: string }).text;
+    const [name, qty, amount] = tableColumnWidths(cols, 32);
+    expect(text).toBe('Rice'.padEnd(name ?? 0) + ' ' + '2'.padStart(qty ?? 0) + ' ' + '90.00'.padStart(amount ?? 0));
   });
 });
