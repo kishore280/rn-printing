@@ -23,11 +23,12 @@ type ReceiptBlock =
   | { kind: 'table'; columns: { width: number | 'auto'; align: ReceiptAlign }[]; header?: string[]; rows: string[][]; bold?: boolean }
   | { kind: 'qr'; data: string; cell?: number; align?: ReceiptAlign }
   | { kind: 'barcode'; data: string; height?: number; showText?: boolean; align?: ReceiptAlign }
+  | { kind: 'image'; bitmap: Bitmap1bpp; align?: ReceiptAlign }
   | { kind: 'cut'; mode?: 'partial' | 'full' };
 interface ReceiptDesign { paper: ReceiptPaper; blocks: ReceiptBlock[] }
 ```
 
-`ReceiptLine` is `text` (already padded and aligned), `qr`, `barcode` or `cut` (`fed: true` when the paper has no cutter).
+`ReceiptLine` is `text` (already padded and aligned), `qr`, `barcode`, `image` or `cut` (`fed: true` when the paper has no cutter).
 `ReceiptIssue` has `severity: 'warning'`, a `code` (`unprintable`, `too_wide`, `bad_value`), a `message` and the `blockIndex`
 (`-1` for the paper).
 
@@ -45,6 +46,7 @@ interface ReceiptDesign { paper: ReceiptPaper; blocks: ReceiptBlock[] }
   A cell may hold `\n`: it is a hard break, and each part wraps inside the column. A row is as tall as its tallest cell.
   The header is a bold row.
 - `qr` and `barcode` (Code 128) are one line each. Alignment is done by the encoder.
+- `image`: a 1-bit `Bitmap1bpp` (`width`, `height`, `bytesPerRow`, `data`: bit 1 is a black dot, the first dot is the top bit) printed as it is, in dots, not in columns. Use it for a line the code pages cannot print (Tamil): draw the whole line (a name and its right-aligned amount too) in dots of the paper width, then send the picture. A picture wider than `paper.dotsWidth` warns (`too_wide`) and prints anyway (the printer cuts it); a bitmap whose sizes and data do not agree warns (`bad_value`) and is left out. The bytes are the encoder's `image()` with a plain threshold, so the dots stay as they are. The layout keeps the bitmap in the line, so a preview draws the same dots that print.
 - `cut`: with a cutter, the bytes are `GS V 66 0` (partial, the default) or `GS V 65 0` (full): Epson's "function B", which first feeds the paper until the last printed line has reached the cutter, then cuts. The cutter sits behind the print head (about 14 mm on an Epson TM-T88), so a plain `GS V 0` / `GS V 1` ("function A", the encoder's own cut) cuts where the cutter is now: on the SPRT SP-POS894UED the QR code of a test receipt came out on the next piece (owner's photos, 2026-10-09). The vendor's Setting Tool for this printer family sends `1D 56 42 00` in its own cut. The printer uses its own distance, so no distance is guessed here; the empty space under the last line comes from the template's `feed` block. Without a cutter, the bytes are 4 empty lines and the layout line has `fed: true`. The preview does not show the feed. NOT checked on the printer after this change.
 - A letter that no code page holds is shown as `?` in the layout, as the printer prints it.
 - Control characters are removed. A tab is a space.
@@ -53,7 +55,7 @@ interface ReceiptDesign { paper: ReceiptPaper; blocks: ReceiptBlock[] }
 
 - **Paper is 16 to 48 columns.** The encoder library accepts 32, 35, 42, 44 or 48 columns for ESC/POS. We use the smallest of these
   that is not narrower than the paper. A paper with 80 columns is not supported. `checkReceipt` warns, and 48 is used.
-- **`₹` and Tamil print as `?`.** No code page of the encoder has them. `checkReceipt` names the letters. A picture path is a later job.
+- **Tamil (and the rupee sign) print as `?` as text.** No code page of the encoder has them. `checkReceipt` names the letters. Draw the line yourself and send it as an `image` block (above).
 - The code page is chosen by the encoder (`codepage('auto')`, generic profile). There is no printer model choice.
 - A line that fills the whole paper width may be followed by an empty line on some printers (the printer wraps, then it gets a line feed). Not tested.
 - The encoder adds a line feed after a QR code, a barcode and a cut. Not tested on a printer.

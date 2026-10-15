@@ -6,7 +6,7 @@
  * Limits:
  * - Nothing in this file is checked on a printer. Only unit tests ran.
  * - The text goes out as single-byte code pages. Letters in no code page (the rupee sign, Tamil) print as "?".
- *   The layout already shows them as "?". `checkReceipt` names them.
+ *   The layout already shows them as "?". `checkReceipt` names them. The caller can draw such a line itself and send it as an `image` block.
  * - The encoder accepts 32, 35, 42, 44 or 48 columns. So the paper is 16 to 48 columns here.
  * - The encoder library needs `structuredClone`. Hermes may not have it. See `ensureStructuredClone`.
  * See docs/RECEIPT.md.
@@ -15,6 +15,7 @@ import ReceiptPrinterEncoder from '@point-of-sale/receipt-printer-encoder';
 import { buildReceipt, paperColumns } from './receiptLayout';
 import { RECEIPT_CODEPAGES, ensureStructuredClone } from './receiptText';
 import { RECEIPT_MAX_COLUMNS } from './receiptTypes';
+import type { Bitmap1bpp } from './bitmap';
 import type { ReceiptDesign, ReceiptIssue, ReceiptLine } from './receiptTypes';
 
 export { RECEIPT_CODEPAGES, ensureStructuredClone, isPrintable } from './receiptText';
@@ -75,6 +76,19 @@ export function receiptToBytes(design: ReceiptDesign): Uint8Array {
   return encoder.encode();
 }
 
+/** The dots as the pixels the encoder reads (it turns pixels into dots itself): black where the bit is 1, white elsewhere, opaque. */
+function pixelsOf(bitmap: Bitmap1bpp): { data: Uint8ClampedArray; width: number; height: number } {
+  const { width, height, bytesPerRow } = bitmap;
+  const data = new Uint8ClampedArray(width * height * 4).fill(255);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const on = ((bitmap.data[y * bytesPerRow + (x >> 3)] ?? 0) >> (7 - (x & 7))) & 1;
+      if (on === 1) data.fill(0, (y * width + x) * 4, (y * width + x) * 4 + 3);
+    }
+  }
+  return { data, width, height };
+}
+
 /** One printed line to encoder calls. */
 function encodeLine(encoder: ReceiptPrinterEncoder, line: ReceiptLine): void {
   switch (line.kind) {
@@ -96,6 +110,13 @@ function encodeLine(encoder: ReceiptPrinterEncoder, line: ReceiptLine): void {
       return;
     case 'barcode':
       encoder.align(line.align).barcode(line.data, 'code128', { height: line.height, text: line.showText }).align('left');
+      return;
+    case 'image':
+      // The encoder's own image command (raster, padded to whole bytes); a plain threshold keeps the dots as they are.
+      encoder
+        .align(line.align)
+        .image(pixelsOf(line.bitmap), { width: line.bitmap.width, height: line.bitmap.height, algorithm: 'threshold' })
+        .align('left');
       return;
     case 'cut':
       if (line.fed) encoder.newline(FEED_AFTER_CUT_WITHOUT_CUTTER);
