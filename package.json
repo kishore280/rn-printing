@@ -58,7 +58,7 @@
     "react": "^19.3.0",
     "react-native": "^0.87.1",
     "react-native-nitro-modules": "^0.37.1",
-    "ts-jest": "^29.1.2",
+    "ts-jest": "^29.4.15",
     "typescript": "^5.4.5"
   },
   "jest": {
