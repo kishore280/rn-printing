@@ -10,7 +10,7 @@
  * - Nothing in this file is checked on a printer.
  */
 import type { Bitmap1bpp } from './bitmap';
-import { ZplLabel, escapeFieldData, mmToDots } from './zpl';
+import { ZplLabel, boxSides, escapeFieldData, mmToDots } from './zpl';
 import type { Barcode1DType, DotsPerMm } from './zpl';
 
 export interface DesignText {
@@ -159,7 +159,9 @@ export function vegSymbolZpl(x: number, y: number, side: number, type: 'veg' | '
   for (let r = 0; r < height; r += step) {
     const rows = Math.min(step, height - r);
     const w = Math.max(1, Math.round((base * (r + rows)) / height));
-    z += `^FO${x + Math.round((side - w) / 2)},${top + r}^GB${w},${rows},${rows}^FS`;
+    // A bar is never narrower than its thickness on paper (boxSides): the tip's bar is as wide as it prints, kept centred.
+    const bar = boxSides(w, rows, rows);
+    z += `^FO${x + Math.round((side - bar.width) / 2)},${top + r}^GB${bar.width},${bar.height},${rows}^FS`;
   }
   return z;
 }

@@ -30,6 +30,7 @@ import {
   tokenize,
 } from './zplTokens';
 import type { Token } from './zplTokens';
+import { boxSides } from './zpl';
 import type {
   ZplDocument,
   ZplIssue,
@@ -311,9 +312,14 @@ class ZplReader {
     const h = num(p[1]);
     const th = num(p[2]) ?? 1;
     this.range(t, 'Thickness', th, 1, 32000);
+    const drawn = boxSides(w ?? th, h ?? th, th);
+    // Zebra's guide gives the sides "value of t to 32000"; a Zebra printer draws a shorter side as the thickness, another may not.
+    if ((w !== undefined && w < th) || (h !== undefined && h < th)) {
+      this.issue('warning', 'GB_SIDE', `^GB${w ?? ''},${h ?? ''},${th}: a side is shorter than the thickness; send ^GB${drawn.width},${drawn.height},${th}`, t);
+    }
     const f = this.cur(t);
     this.open(t).elements.push({
-      kind: 'box', x: f.x, y: f.y, width: Math.max(w ?? th, th), height: Math.max(h ?? th, th), thickness: th,
+      kind: 'box', x: f.x, y: f.y, ...drawn, thickness: th,
       rounding: num(p[4]) ?? 0, color: p[3] === 'W' ? 'W' : 'B',
     });
   }
