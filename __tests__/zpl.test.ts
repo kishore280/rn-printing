@@ -49,3 +49,12 @@ describe('zpl', () => {
     expect(testLabel().toString().startsWith('^XA^PW400^LL240')).toBe(true);
   });
 });
+
+describe('^GB sides (Zebra: width and height are "value of t to 32000")', () => {
+  it('sends a side shorter than the thickness as the thickness, which is what prints', () => {
+    const z = new ZplLabel({ widthDots: 400, lengthDots: 240 }).box(0, 0, 132, 1, 2).box(0, 0, 1, 104, 2).toString();
+    expect(z).toContain('^GB132,2,2^FS');
+    expect(z).toContain('^GB2,104,2^FS');
+    expect(z).not.toMatch(/\^GB1,|\^GB\d+,1,2/);
+  });
+});

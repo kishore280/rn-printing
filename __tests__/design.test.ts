@@ -171,3 +171,23 @@ describe('more checks from the Zebra guide', () => {
     }
   });
 });
+
+describe('^GB sides from a design (Zebra: width and height are "value of t to 32000")', () => {
+  const sideIssues = (z: string) => parseZpl(z).issues.filter((i) => i.code === 'GB_SIDE');
+  it('a hairline box and every size of non-veg mark send no side shorter than its thickness', () => {
+    const items: LabelDesign['items'] = [
+      { kind: 'box', xMm: 2, yMm: 2, widthMm: 16, heightMm: 0.1 },
+      { kind: 'box', xMm: 2, yMm: 4, widthMm: 0.1, heightMm: 13 },
+    ];
+    for (let mm = 2.5; mm <= 16; mm += 0.5) items.push({ kind: 'veg', xMm: 20, yMm: 2, type: 'nonveg', sizeMm: mm });
+    expect(sideIssues(designToZpl(base(items)))).toEqual([]);
+  });
+  it('the preview draws what was drawn before: the same sides as the thickness rule', () => {
+    const els = parseZpl(designToZpl(base([{ kind: 'box', xMm: 0, yMm: 0, widthMm: 16, heightMm: 0.1 }]))).labels[0]?.elements ?? [];
+    expect(els[0]).toMatchObject({ kind: 'box', width: 128, height: 2, thickness: 2 });
+  });
+  it('the checker warns on a side shorter than the thickness', () => {
+    expect(sideIssues('^XA^FO0,0^GB132,1,2^FS^XZ')).toHaveLength(1);
+    expect(sideIssues('^XA^FO0,0^GB132,2,2^FS^XZ')).toHaveLength(0);
+  });
+});

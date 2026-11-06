@@ -105,6 +105,16 @@ export function mmToDots(mm: number, dotsPerMm: DotsPerMm = 8): number {
  * Builds one ZPL II label (the BPLZ command set). Coordinates are in dots,
  * with the origin at the top-left corner.
  */
+/**
+ * The sides of a `^GB` box as the printer draws it. Zebra's ZPL guide (^GB): the width and the height take "value of t to 32000",
+ * and a box is never drawn smaller than its thickness, so a 1-dot line with a 2-dot border prints 2 dots. Sending a side below the
+ * thickness is out of range for the command; a Zebra printer draws the thickness, another ZPL printer may not. The encoder sends the
+ * drawn size and the preview (`parseZpl`) draws the same rule, so the text, the preview and the paper agree.
+ */
+export function boxSides(width: number, height: number, thickness: number): { width: number; height: number } {
+  return { width: Math.max(width, thickness), height: Math.max(height, thickness) };
+}
+
 export class ZplLabel {
   private readonly parts: Array<string | Uint8Array> = [];
   private readonly opts: Required<LabelOptions>;
@@ -236,12 +246,11 @@ export class ZplLabel {
     return this;
   }
 
-  /** Rectangle outline. thickness is in dots. */
+  /** Rectangle outline. thickness is in dots. A side shorter than the thickness is sent as the thickness: that is what prints (boxSides). */
   box(x: number, y: number, width: number, height: number, thickness = 2): this {
-    this.parts.push(
-      `^FO${int('x', x)},${int('y', y)}^GB${int('width', width, 1)},${int('height', height, 1)},` +
-        `${int('thickness', thickness, 1)}^FS`
-    );
+    const t = int('thickness', thickness, 1);
+    const side = boxSides(int('width', width, 1), int('height', height, 1), t);
+    this.parts.push(`^FO${int('x', x)},${int('y', y)}^GB${side.width},${side.height},${t}^FS`);
     return this;
   }
 
